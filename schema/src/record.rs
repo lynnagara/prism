@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use datafusion::arrow::array::ArrayRef;
+use datafusion::arrow::compute::{SortColumn, lexsort_to_indices, take_record_batch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -17,13 +18,19 @@ type ColumnBuilder<T> = Box<dyn Fn(&[T]) -> ArrayRef>;
 /// identically — a mismatch gives an empty table, not an error.
 pub const PARTITION_COLUMN: &str = "partition";
 
+/// Named because the columns [`Record::all_columns`] declares and the order
+/// [`Record::sort_columns`] sorts by have to agree.
+const ORGANIZATION_ID: &str = "organization_id";
+const PROJECT_ID: &str = "project_id";
+const RECEIVED_AT: &str = "received_at";
+
 /// What the store needs from a record whatever else it holds: who the row
 /// belongs to, and when the store saw it. Carried by every record so no record
 /// declares these columns itself.
 pub struct Common {
     pub organization_id: String,
     pub project_id: String,
-    /// What rows are partitioned by. A span's `start_ts` can precede the
+    /// What rows are partitioned by. A span's `started_at` can precede the
     /// partition it lands in; this cannot.
     pub received_at: Timestamp,
 }
@@ -111,13 +118,44 @@ pub trait Record: Sized + 'static {
 
     fn all_columns() -> Columns<Self> {
         let mut columns = vec![
-            Column::new("organization_id", |r: &Self| &r.common().organization_id),
-            Column::new("project_id", |r: &Self| &r.common().project_id),
-            Column::new("received_at", |r: &Self| &r.common().received_at),
+            Column::new(ORGANIZATION_ID, |r: &Self| &r.common().organization_id),
+            Column::new(PROJECT_ID, |r: &Self| &r.common().project_id),
+            Column::new(RECEIVED_AT, |r: &Self| &r.common().received_at),
         ];
         columns.extend(Self::columns());
 
         Columns::new(columns)
+    }
+
+    /// What rows are clustered by within one project — the column this type's
+    /// commonest lookup filters on, so a merged file's row groups each cover a
+    /// contiguous run of it and the rest can be skipped. Which column that is
+    /// depends entirely on how the type is read, so every type answers for
+    /// itself.
+    fn sort_columns() -> Vec<&'static str>;
+
+    /// Tenancy first whatever the type: every user-facing query is scoped to
+    /// one organization and project, so leading with them is what makes row
+    /// groups selective for the reader that matters.
+    fn all_sort_columns() -> Vec<&'static str> {
+        let mut columns = vec![ORGANIZATION_ID, PROJECT_ID];
+        columns.extend(Self::sort_columns());
+        columns
+    }
+
+    fn sorted(batch: RecordBatch) -> Result<RecordBatch, ArrowError> {
+        let columns: Vec<SortColumn> = Self::all_sort_columns()
+            .iter()
+            .map(|name| SortColumn {
+                values: batch
+                    .column_by_name(name)
+                    .expect("sort_columns names a column in the schema")
+                    .clone(),
+                options: None,
+            })
+            .collect();
+
+        take_record_batch(&batch, &lexsort_to_indices(&columns, None)?)
     }
 
     fn to_record_batch(rows: &[Self]) -> Result<RecordBatch, ArrowError> {
@@ -146,6 +184,10 @@ mod tests {
 
         fn columns() -> Vec<Column<Self>> {
             vec![Column::new("project_id", |d| &d.common.project_id)]
+        }
+
+        fn sort_columns() -> Vec<&'static str> {
+            vec![]
         }
     }
 

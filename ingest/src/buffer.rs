@@ -47,7 +47,7 @@ impl<T: Record> Buffer<T> {
 
         for partition in keys {
             let pending = &self.partitions[&partition];
-            let rows = T::to_record_batch(&pending.rows)?;
+            let rows = T::sorted(T::to_record_batch(&pending.rows)?)?;
             let directory = T::directory(partition);
 
             self.writer
@@ -86,8 +86,8 @@ mod tests {
             trace_id: "c".repeat(32),
             parent_span_id: None,
             name: "GET /checkout".to_string(),
-            start_ts: Timestamp::from(received_at),
-            end_ts: None,
+            started_at: Timestamp::from(received_at),
+            ended_at: None,
             status: Status::Ok,
             status_message: None,
         }

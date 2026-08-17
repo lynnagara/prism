@@ -38,15 +38,16 @@ impl ArrowField for Status {
 }
 
 /// One unit of work, written as a single row. A span that started and never
-/// finished has no `end_ts`, which is why it is the one timestamp that can be absent.
+/// finished has no `ended_at`, which is why it is the one timestamp that can be
+/// absent.
 pub struct Span {
     pub common: Common,
     pub span_id: String,
     pub trace_id: String,
     pub parent_span_id: Option<String>,
     pub name: String,
-    pub start_ts: Timestamp,
-    pub end_ts: Option<Timestamp>,
+    pub started_at: Timestamp,
+    pub ended_at: Option<Timestamp>,
     pub status: Status,
     /// Why it failed, in whatever words the caller used. Only set when
     /// `status` is `Error`.
@@ -67,11 +68,18 @@ impl Record for Span {
             Column::new("trace_id", |s| &s.trace_id),
             Column::new("parent_span_id", |s| &s.parent_span_id),
             Column::new("name", |s| &s.name),
-            Column::new("start_ts", |s| &s.start_ts),
-            Column::new("end_ts", |s| &s.end_ts),
+            Column::new("started_at", |s| &s.started_at),
+            Column::new("ended_at", |s| &s.ended_at),
             Column::new("status", |s| &s.status),
             Column::new("status_message", |s| &s.status_message),
         ]
+    }
+
+    /// A trace is read whole — every span sharing a `trace_id` — so clustering
+    /// on it is what lets that read skip row groups. `started_at` second
+    /// returns a trace already in the order a waterfall draws it.
+    fn sort_columns() -> Vec<&'static str> {
+        vec!["trace_id", "started_at"]
     }
 }
 
@@ -99,8 +107,8 @@ mod tests {
                 trace_id: "c".repeat(32),
                 parent_span_id: None,
                 name: "GET /checkout".to_string(),
-                start_ts: at(9),
-                end_ts: Some(at(10)),
+                started_at: at(9),
+                ended_at: Some(at(10)),
                 status: Status::Ok,
                 status_message: None,
             },
@@ -114,8 +122,8 @@ mod tests {
                 trace_id: "c".repeat(32),
                 parent_span_id: Some("a".repeat(16)),
                 name: "charge card".to_string(),
-                start_ts: at(9),
-                end_ts: None,
+                started_at: at(9),
+                ended_at: None,
                 status: Status::Unset,
                 status_message: None,
             },
@@ -146,10 +154,10 @@ mod tests {
     }
 
     #[test]
-    fn a_span_that_never_finished_has_no_end_ts() {
+    fn a_span_that_never_finished_has_no_ended_at() {
         let batch = Span::to_record_batch(&spans()).unwrap();
 
-        assert_eq!(column(&batch, "end_ts"), ["2026-08-17T10:00:00Z", "null"]);
+        assert_eq!(column(&batch, "ended_at"), ["2026-08-17T10:00:00Z", "null"]);
         assert_eq!(
             column(&batch, "parent_span_id"),
             ["null".to_string(), "a".repeat(16)]

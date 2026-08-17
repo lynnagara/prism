@@ -132,7 +132,7 @@ mod tests {
         assert_eq!(<Option<Timestamp>>::data_type(), Timestamp::data_type());
     }
 
-    /// A `None` field — `end_ts` on a span that never finished — is a null in
+    /// A `None` field — `ended_at` on a span that never finished — is a null in
     /// the column, at that row, leaving the values around it untouched.
     #[test]
     fn none_becomes_null() {
