@@ -1,0 +1,8 @@
+[workspace]
+resolver = "3"
+members = ["schema"]
+
+[workspace.dependencies]
+chrono = "0.4.45"
+datafusion = "54.1.0"
+schema = { path = "schema" }
