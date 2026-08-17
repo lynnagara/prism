@@ -4,7 +4,7 @@ use datafusion::arrow::array::{ArrayRef, StringArray};
 use datafusion::arrow::datatypes::DataType;
 
 use crate::record::{Column, Common, Record};
-use crate::types::{ArrowField, Timestamp};
+use crate::types::{ArrowField, Granularity, Timestamp};
 
 /// Span status codes. `Unset` is default.
 pub enum Status {
@@ -54,6 +54,9 @@ pub struct Span {
 }
 
 impl Record for Span {
+    const TABLE: &'static str = "spans";
+    const GRANULARITY: Granularity = Granularity::Day;
+
     fn common(&self) -> &Common {
         &self.common
     }

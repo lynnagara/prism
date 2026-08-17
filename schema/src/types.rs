@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use datafusion::arrow::array::{ArrayRef, StringArray, TimestampMicrosecondArray};
 use datafusion::arrow::datatypes::{DataType, TimeUnit};
 
@@ -37,6 +37,27 @@ impl<T: ArrowField> ArrowField for Option<T> {
     }
 }
 
+/// How finely partitions are bucketed — each record type decides which one
+/// applies; this is just the vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Granularity {
+    Day,
+}
+
+impl Granularity {
+    /// How long one partition covers. Partitions floor against this, so any
+    /// fixed interval works.
+    pub fn duration(&self) -> TimeDelta {
+        match self {
+            Granularity::Day => TimeDelta::days(1),
+        }
+    }
+}
+
+pub trait TimePartitioned {
+    fn partition_start(&self, granularity: Granularity) -> DateTime<Utc>;
+}
+
 pub fn utc_timestamp() -> DataType {
     DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into()))
 }
@@ -57,6 +78,16 @@ impl ArrowField for String {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Timestamp(DateTime<Utc>);
+
+impl TimePartitioned for Timestamp {
+    /// Floored against the unix epoch, which is midnight, so a granularity
+    /// dividing a day lands on the boundary its name implies.
+    fn partition_start(&self, granularity: Granularity) -> DateTime<Utc> {
+        let step = granularity.duration().num_seconds();
+        DateTime::from_timestamp(self.0.timestamp().div_euclid(step) * step, 0)
+            .expect("a floored timestamp is in range")
+    }
+}
 
 impl From<DateTime<Utc>> for Timestamp {
     fn from(value: DateTime<Utc>) -> Self {
@@ -82,6 +113,17 @@ impl ArrowField for Timestamp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn partition_start_truncates_to_granularity() {
+        let ts = Timestamp::from(Utc.with_ymd_and_hms(2026, 8, 2, 14, 37, 22).unwrap());
+
+        assert_eq!(
+            ts.partition_start(Granularity::Day),
+            Utc.with_ymd_and_hms(2026, 8, 2, 0, 0, 0).unwrap()
+        );
+    }
 
     /// Whether a field is optional decides only that its column is nullable,
     /// never what type it holds.

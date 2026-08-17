@@ -1,0 +1,14 @@
+[package]
+name = "ingest"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = { workspace = true }
+datafusion = { workspace = true }
+schema = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+futures = "0.3.34"
+tokio = { workspace = true, features = ["macros", "rt"] }

@@ -1,14 +1,21 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use chrono::{DateTime, SecondsFormat, Utc};
 use datafusion::arrow::array::ArrayRef;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::record_batch::RecordBatch;
 
-use crate::types::{ArrowField, Timestamp};
+use crate::types::{ArrowField, Granularity, TimePartitioned, Timestamp};
 
 type ColumnBuilder<T> = Box<dyn Fn(&[T]) -> ArrayRef>;
+
+/// Names every partition directory, as `partition=<rfc3339>`. The `key=value`
+/// shape is hive-style partitioning, the convention datafusion parses to
+/// recover a column from the path, so a writer and a reader must spell the key
+/// identically — a mismatch gives an empty table, not an error.
+pub const PARTITION_COLUMN: &str = "partition";
 
 /// What the store needs from a record whatever else it holds: who the row
 /// belongs to, and when the store saw it. Carried by every record so no record
@@ -74,10 +81,33 @@ impl<T> Columns<T> {
 
 /// Every type the store holds implements Record.
 pub trait Record: Sized + 'static {
+    /// Where this type is stored — must be unique across every `Record` type.
+    const TABLE: &'static str;
+
+    /// How finely this type's data is partitioned — a storage decision
+    /// intrinsic to the type, not a per-deployment tuning knob.
+    const GRANULARITY: Granularity;
+
     fn common(&self) -> &Common;
 
     /// The record's own columns, added to the ones every record shares.
     fn columns() -> Vec<Column<Self>>;
+
+    /// RFC 3339 so the value is parseable as a timestamp rather than only a
+    /// string, and spelled the same at every granularity so changing
+    /// `GRANULARITY` later doesn't split the column into two formats.
+    fn partition_dir(partition: DateTime<Utc>) -> String {
+        format!(
+            "{PARTITION_COLUMN}={}",
+            partition.to_rfc3339_opts(SecondsFormat::Secs, true)
+        )
+    }
+
+    /// Directory holding one partition's objects, from any instant inside it.
+    fn directory(instant: DateTime<Utc>) -> String {
+        let start = Timestamp::from(instant).partition_start(Self::GRANULARITY);
+        format!("{}/{}", Self::TABLE, Self::partition_dir(start))
+    }
 
     fn all_columns() -> Columns<Self> {
         let mut columns = vec![
@@ -107,6 +137,9 @@ mod tests {
     }
 
     impl Record for Duplicated {
+        const TABLE: &'static str = "duplicated";
+        const GRANULARITY: Granularity = Granularity::Day;
+
         fn common(&self) -> &Common {
             &self.common
         }
