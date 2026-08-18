@@ -11,7 +11,7 @@ use ingest::writer::Writer;
 use query::Catalog;
 use schema::record::Common;
 use schema::spans::{Span, Status};
-use schema::types::Timestamp;
+use schema::types::{Tags, Timestamp};
 
 fn at(day: u32, hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, day, hour, 0, 0).unwrap()
@@ -32,6 +32,7 @@ fn span(trace: &str, span_id: &str, started_at: DateTime<Utc>) -> Span {
         ended_at: None,
         status: Status::Ok,
         status_message: None,
+        tags: Tags::default(),
     }
 }
 
@@ -175,4 +176,54 @@ async fn prunes_an_exact_received_at_without_losing_it() {
     let plan = explain(&catalog, query).await;
     assert!(plan.contains("partition=2026-08-17"), "{plan}");
     assert!(!plan.contains("partition=2026-08-18"), "{plan}");
+}
+
+/// Tags survive the round trip, and a bare one — set with no value — is still
+/// distinguishable from a tag that was never set.
+#[tokio::test]
+async fn tags_read_back() {
+    let mut tagged = span("aaa", "tagged", at(17, 9));
+    tagged.tags = Tags::from_iter([
+        ("env", Some("prod".to_string())),
+        ("blank", Some(String::new())),
+        ("production", None),
+    ]);
+    let store = written(vec![tagged]).await;
+
+    let batches = catalog(store)
+        .await
+        .sql_cross_org(
+            "select tags['env'] as env,
+                    tags['blank'] is null as blank_is_null,
+                    tags['production'] is null as bare_is_null,
+                    'production' = any(map_keys(tags)) as bare_set,
+                    'nope' = any(map_keys(tags)) as absent_set
+             from spans",
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        pretty_format_batches(&batches).unwrap().to_string(),
+        "+------+---------------+--------------+----------+------------+\n\
+         | env  | blank_is_null | bare_is_null | bare_set | absent_set |\n\
+         +------+---------------+--------------+----------+------------+\n\
+         | prod | false         | true         | true     | false      |\n\
+         +------+---------------+--------------+----------+------------+"
+    );
+}
+
+#[tokio::test]
+async fn a_tag_filters() {
+    let mut tagged = span("aaa", "tagged", at(17, 9));
+    tagged.tags = Tags::from_iter([("env", Some("prod".to_string()))]);
+    let store = written(vec![tagged, span("aaa", "untagged", at(17, 10))]).await;
+
+    let batches = catalog(store)
+        .await
+        .sql_cross_org("select span_id from spans where tags['env'] = 'prod'")
+        .await
+        .unwrap();
+
+    assert_eq!(span_ids(&batches), ["tagged"]);
 }

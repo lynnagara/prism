@@ -4,7 +4,7 @@ use datafusion::arrow::array::{ArrayRef, StringArray};
 use datafusion::arrow::datatypes::DataType;
 
 use crate::record::{Column, Common, Record};
-use crate::types::{ArrowField, Granularity, Timestamp};
+use crate::types::{ArrowField, Granularity, Tags, Timestamp};
 
 /// Span status codes. `Unset` is default.
 pub enum Status {
@@ -52,6 +52,7 @@ pub struct Span {
     /// Why it failed, in whatever words the caller used. Only set when
     /// `status` is `Error`.
     pub status_message: Option<String>,
+    pub tags: Tags,
 }
 
 impl Record for Span {
@@ -72,6 +73,7 @@ impl Record for Span {
             Column::new("ended_at", |s| &s.ended_at),
             Column::new("status", |s| &s.status),
             Column::new("status_message", |s| &s.status_message),
+            Column::new("tags", |s| &s.tags),
         ]
     }
 
@@ -111,6 +113,7 @@ mod tests {
                 ended_at: Some(at(10)),
                 status: Status::Ok,
                 status_message: None,
+                tags: Tags::from_iter([("env", Some("prod".to_string()))]),
             },
             Span {
                 common: Common {
@@ -126,6 +129,7 @@ mod tests {
                 ended_at: None,
                 status: Status::Unset,
                 status_message: None,
+                tags: Tags::default(),
             },
         ]
     }

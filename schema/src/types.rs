@@ -1,8 +1,11 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use datafusion::arrow::array::{ArrayRef, StringArray, TimestampMicrosecondArray};
-use datafusion::arrow::datatypes::{DataType, TimeUnit};
+use datafusion::arrow::array::{
+    ArrayRef, MapBuilder, MapFieldNames, StringArray, StringBuilder, TimestampMicrosecondArray,
+};
+use datafusion::arrow::datatypes::{DataType, Field, Fields, TimeUnit};
 
 /// A field type that knows how to become an Arrow column
 pub trait ArrowField {
@@ -107,6 +110,75 @@ impl ArrowField for Timestamp {
             )
             .with_timezone("UTC"),
         )
+    }
+}
+
+/// A map is stored as a list of key-value structs, and the names of those
+/// nested fields are part of its type — so the type declared for the column and
+/// the array built for it must use the same ones, or the batch is a mismatch.
+fn map_field_names() -> MapFieldNames {
+    MapFieldNames {
+        entry: "entries".to_string(),
+        key: "keys".to_string(),
+        value: "values".to_string(),
+    }
+}
+
+/// Free-form key-value annotations on a record. Sorted, so the same tags always
+/// encode identically. A value is optional — a bare tag is a key with none —
+/// and `tags['x']` reads that as null, so use `'x' = any(map_keys(tags))`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Tags(BTreeMap<String, Option<String>>);
+
+impl<K: Into<String>, V: Into<Option<String>>> FromIterator<(K, V)> for Tags {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(tags: I) -> Self {
+        Tags(
+            tags.into_iter()
+                .map(|(key, value)| (key.into(), value.into()))
+                .collect(),
+        )
+    }
+}
+
+impl ArrowField for Tags {
+    fn data_type() -> DataType {
+        let names = map_field_names();
+
+        DataType::Map(
+            Arc::new(Field::new(
+                names.entry,
+                DataType::Struct(Fields::from(vec![
+                    Field::new(names.key, DataType::Utf8, false),
+                    Field::new(names.value, DataType::Utf8, true),
+                ])),
+                false,
+            )),
+            false,
+        )
+    }
+
+    fn build_array<'a>(values: impl Iterator<Item = Option<&'a Self>>) -> ArrayRef {
+        let mut builder = MapBuilder::new(
+            Some(map_field_names()),
+            StringBuilder::new(),
+            StringBuilder::new(),
+        );
+
+        for row_tags in values {
+            if let Some(tags) = row_tags {
+                for (key, value) in &tags.0 {
+                    builder.keys().append_value(key);
+                    builder.values().append_option(value.as_deref());
+                }
+            }
+            // Once per row, not per tag: this is what marks where a row's
+            // entries end, so a row with none is an empty map.
+            builder
+                .append(true)
+                .expect("keys and values are appended in pairs");
+        }
+
+        Arc::new(builder.finish())
     }
 }
 

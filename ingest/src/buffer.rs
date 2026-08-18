@@ -72,7 +72,7 @@ mod tests {
     use futures::StreamExt;
     use schema::record::Common;
     use schema::spans::{Span, Status};
-    use schema::types::Timestamp;
+    use schema::types::{Tags, Timestamp};
     use std::sync::Arc;
 
     fn span(received_at: DateTime<Utc>) -> Span {
@@ -90,6 +90,7 @@ mod tests {
             ended_at: None,
             status: Status::Ok,
             status_message: None,
+            tags: Tags::default(),
         }
     }
 
