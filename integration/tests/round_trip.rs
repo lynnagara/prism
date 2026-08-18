@@ -227,3 +227,41 @@ async fn a_tag_filters() {
 
     assert_eq!(span_ids(&batches), ["tagged"]);
 }
+
+/// A cron checking in as it goes inserts the same span more than once. It is
+/// one span, and the newest insert wins.
+#[tokio::test]
+#[ignore = "spans_merged is not registered yet"]
+async fn the_newest_insert_wins() {
+    let started = at(17, 9);
+
+    let mut checking_in = span("aaa", "s1", started);
+    checking_in.common.received_at = Timestamp::from(started);
+
+    let mut finished = span("aaa", "s1", started);
+    finished.common.received_at = Timestamp::from(at(17, 10));
+    finished.ended_at = Some(Timestamp::from(at(17, 10)));
+
+    let store = written(vec![checking_in, finished]).await;
+    let catalog = catalog(store).await;
+
+    let raw = catalog
+        .sql_cross_org("select span_id from spans")
+        .await
+        .unwrap();
+    assert_eq!(span_ids(&raw), ["s1", "s1"], "both inserts are stored");
+
+    let merged = catalog
+        .sql_cross_org("select span_id, ended_at from spans_merged")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        pretty_format_batches(&merged).unwrap().to_string(),
+        "+---------+----------------------+\n\
+         | span_id | ended_at             |\n\
+         +---------+----------------------+\n\
+         | s1      | 2026-08-17T10:00:00Z |\n\
+         +---------+----------------------+"
+    );
+}
