@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::catalog::view::ViewTable;
 use datafusion::datasource::file_format::parquet::ParquetFormat;
 use datafusion::datasource::listing::{
     ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
@@ -59,40 +60,33 @@ impl Catalog {
 
         // Wrapped so a filter on `received_at` also bounds which partitions can
         // match; a bare ListingTable reads the two as unrelated.
-        let table = PartitionedTable::new(ListingTable::try_new(config)?, T::GRANULARITY);
+        let table = PartitionedTable::new(Arc::new(ListingTable::try_new(config)?), T::GRANULARITY);
 
         self.ctx.register_table(T::TABLE, Arc::new(table))?;
 
         if let Some(strategy) = T::merge() {
-            self.create_merged_view::<T>(strategy).await?;
+            self.register_merged::<T>(strategy).await?;
         }
         Ok(())
     }
 
     /// One row per primary key *within a partition* — the partition is part of
-    /// the ranking key, so a record whose rows straddle two still shows both
-    /// until compaction consolidates them.
-    ///
-    /// Ranking rather than grouping keeps every column without naming an
-    /// aggregate for each, which no aggregate could do for `tags`.
-    async fn create_merged_view<T: Record>(&self, strategy: MergeStrategy) -> Result<()> {
+    /// the ranking key, so a record whose rows straddle two still shows both.
+    async fn register_merged<T: Record>(&self, strategy: MergeStrategy) -> Result<()> {
         let schema = T::schema();
         let mut names: Vec<&str> = schema.fields().iter().map(|f| f.name().as_str()).collect();
         names.push(PARTITION_COLUMN);
         let columns = names.join(", ");
 
-        // The partition joins the key so that ranking happens within one, which is
-        // what lets a filter on it be pushed below the window: dropping whole
-        // partitions cannot change the ranks inside those that remain.
         let mut key = T::all_primary_key();
         key.push(PARTITION_COLUMN);
         let key = key.join(", ");
 
         let MergeStrategy::Latest { version } = strategy;
 
+        // Ranked rather than grouped: no aggregate could combine two `tags`.
         let sql = format!(
-            "create view {table}_merged as \
-             select {columns} from ( \
+            "select {columns} from ( \
                select {columns}, \
                  row_number() over (partition by {key} order by {version} desc) as merge_rank \
                from {table} \
@@ -100,7 +94,14 @@ impl Catalog {
             table = T::TABLE,
         );
 
-        self.ctx.sql(&sql).await?;
+        // Wrapped like the stored rows are, so a `received_at` filter still
+        // bounds the partitions: the view applies what it is handed above its
+        // own plan, and the optimizer pushes it below the window from there.
+        let plan = self.ctx.sql(&sql).await?.into_unoptimized_plan();
+        let merged = PartitionedTable::new(Arc::new(ViewTable::new(plan, None)), T::GRANULARITY);
+
+        self.ctx
+            .register_table(format!("{}_merged", T::TABLE), Arc::new(merged))?;
         Ok(())
     }
 

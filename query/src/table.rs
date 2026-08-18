@@ -11,7 +11,6 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::catalog::{ScanArgs, ScanResult, Session, TableProvider};
 use datafusion::common::ScalarValue;
-use datafusion::datasource::listing::ListingTable;
 use datafusion::error::Result;
 use datafusion::logical_expr::{BinaryExpr, Operator, TableProviderFilterPushDown, TableType};
 use datafusion::physical_plan::ExecutionPlan;
@@ -21,16 +20,16 @@ use schema::types::{Granularity, TimePartitioned, Timestamp};
 
 #[derive(Debug)]
 pub struct PartitionedTable {
-    inner: Arc<ListingTable>,
+    inner: Arc<dyn TableProvider>,
     granularity: Granularity,
 }
 
 impl PartitionedTable {
-    pub fn new(inner: ListingTable, granularity: Granularity) -> Self {
-        Self {
-            inner: Arc::new(inner),
-            granularity,
-        }
+    /// Wraps any table whose rows carry a `partition` column — the files
+    /// themselves, or a view over them, which applies what it is given on top
+    /// of its own plan and leaves the optimizer to push it the rest of the way.
+    pub fn new(inner: Arc<dyn TableProvider>, granularity: Granularity) -> Self {
+        Self { inner, granularity }
     }
 
     /// Pushes `filter` down to `partition`, to avoid opening every file.

@@ -269,7 +269,6 @@ async fn the_newest_insert_wins() {
 /// without changing which row ranks first — so a time filter on the merged
 /// table reads every partition, where the stored table reads one.
 #[tokio::test]
-#[ignore = "merged reads do not prune yet"]
 async fn a_merged_read_prunes_partitions() {
     let store = written(vec![
         span("aaa", "monday", at(17, 9)),
