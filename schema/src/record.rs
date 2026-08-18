@@ -22,7 +22,7 @@ pub const PARTITION_COLUMN: &str = "partition";
 /// [`Record::sort_columns`] sorts by have to agree.
 const ORGANIZATION_ID: &str = "organization_id";
 const PROJECT_ID: &str = "project_id";
-const RECEIVED_AT: &str = "received_at";
+pub const RECEIVED_AT: &str = "received_at";
 
 /// What the store needs from a record whatever else it holds: who the row
 /// belongs to, and when the store saw it. Carried by every record so no record
@@ -156,6 +156,12 @@ pub trait Record: Sized + 'static {
             .collect();
 
         take_record_batch(&batch, &lexsort_to_indices(&columns, None)?)
+    }
+
+    /// Declared here rather than inferred from a stored file, so an empty or
+    /// partial partition can't produce a different table shape.
+    fn schema() -> SchemaRef {
+        Self::all_columns().arrow_schema()
     }
 
     fn to_record_batch(rows: &[Self]) -> Result<RecordBatch, ArrowError> {

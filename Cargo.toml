@@ -1,11 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["ingest", "schema"]
+members = ["ingest", "integration", "query", "schema"]
 
 [workspace.dependencies]
 chrono = "0.4.45"
 datafusion = "54.1.0"
 ingest = { path = "ingest" }
+integration = { path = "integration" }
+query = { path = "query" }
 schema = { path = "schema" }
 tokio = "1.53.1"
 uuid = { version = "1.24.1", features = ["v7"] }

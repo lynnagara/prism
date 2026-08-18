@@ -1788,6 +1788,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8bb03732005da905c88227371639bf1ad885cc712789c011c31c5fb3ab3ccf02"
 
 [[package]]
+name = "integration"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "datafusion",
+ "ingest",
+ "query",
+ "schema",
+ "tokio",
+]
+
+[[package]]
 name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2236,6 +2248,16 @@ checksum = "4dcd034599e63b970727f70d79e02d62390a4a84f7c6b827c27c46d5ac3fa622"
 dependencies = [
  "ar_archive_writer",
  "cc",
+]
+
+[[package]]
+name = "query"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "datafusion",
+ "schema",
 ]
 
 [[package]]

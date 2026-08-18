@@ -1,0 +1,15 @@
+[package]
+name = "integration"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+chrono = { workspace = true }
+datafusion = { workspace = true }
+ingest = { workspace = true }
+query = { workspace = true }
+schema = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
