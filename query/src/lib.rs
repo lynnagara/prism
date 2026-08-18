@@ -36,7 +36,7 @@ impl Catalog {
     /// Registers `T`'s directory as a table named after it.
     pub fn register<T: Record>(&self) -> Result<()> {
         let url = ListingTableUrl::parse(format!("{OBJECT_STORE_URL}/{}/", T::TABLE))?;
-        let sort_order = T::all_sort_columns()
+        let sort_order = T::all_primary_key()
             .iter()
             .map(|name| col(*name).sort(true, false))
             .collect();

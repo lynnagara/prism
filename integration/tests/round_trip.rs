@@ -87,14 +87,14 @@ async fn a_written_span_reads_back() {
     );
 }
 
-/// Rows are written in sort order — trace first, then start — so a trace's
-/// spans come back contiguous and in the order a waterfall draws them.
+/// Rows are written in primary key order — trace, then span — so one trace's
+/// spans are contiguous and a span's own rows sit together.
 #[tokio::test]
 async fn rows_are_stored_in_sort_order() {
     let store = written(vec![
-        span("bbb", "late", at(17, 11)),
-        span("aaa", "first", at(17, 9)),
-        span("bbb", "early", at(17, 10)),
+        span("bbb", "b2", at(17, 11)),
+        span("aaa", "a1", at(17, 9)),
+        span("bbb", "b1", at(17, 10)),
     ])
     .await;
 
@@ -104,7 +104,7 @@ async fn rows_are_stored_in_sort_order() {
         .await
         .unwrap();
 
-    assert_eq!(span_ids(&batches), ["first", "early", "late"]);
+    assert_eq!(span_ids(&batches), ["a1", "b1", "b2"]);
 }
 
 /// The partition is recovered from the path, so it is a column a query can

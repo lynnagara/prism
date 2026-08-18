@@ -3,7 +3,7 @@ use std::sync::Arc;
 use datafusion::arrow::array::{ArrayRef, StringArray};
 use datafusion::arrow::datatypes::DataType;
 
-use crate::record::{Column, Common, Record};
+use crate::record::{Column, Common, MergeStrategy, RECEIVED_AT, Record};
 use crate::types::{ArrowField, Granularity, Tags, Timestamp};
 
 /// Span status codes. `Unset` is default.
@@ -77,11 +77,23 @@ impl Record for Span {
         ]
     }
 
-    /// A trace is read whole — every span sharing a `trace_id` — so clustering
-    /// on it is what lets that read skip row groups. `started_at` second
-    /// returns a trace already in the order a waterfall draws it.
-    fn sort_columns() -> Vec<&'static str> {
-        vec!["trace_id", "started_at"]
+    /// A span is written once when it completes, unless the sender cannot wait
+    /// — a job that might die mid-run writes it whole each time it checks in.
+    ///
+    /// Arrival order decides which wins, for want of anything better: a second
+    /// insert carries the same `started_at`, and `ended_at` is null until the
+    /// span finishes.
+    fn merge() -> Option<MergeStrategy> {
+        Some(MergeStrategy::Latest {
+            version: RECEIVED_AT,
+        })
+    }
+
+    /// A span id is unique within its trace, not beyond it, so the trace is
+    /// part of what identifies a span — and leading with it is also what lets
+    /// a query for one trace skip the rest.
+    fn primary_key() -> Vec<&'static str> {
+        vec!["trace_id", "span_id"]
     }
 }
 

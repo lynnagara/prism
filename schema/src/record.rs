@@ -19,7 +19,7 @@ type ColumnBuilder<T> = Box<dyn Fn(&[T]) -> ArrayRef>;
 pub const PARTITION_COLUMN: &str = "partition";
 
 /// Named because the columns [`Record::all_columns`] declares and the order
-/// [`Record::sort_columns`] sorts by have to agree.
+/// [`Record::primary_key`] orders by have to agree.
 const ORGANIZATION_ID: &str = "organization_id";
 const PROJECT_ID: &str = "project_id";
 pub const RECEIVED_AT: &str = "received_at";
@@ -86,6 +86,14 @@ impl<T> Columns<T> {
     }
 }
 
+/// What to do with rows that describe the same thing.
+pub enum MergeStrategy {
+    /// The row with the greatest `version` supersedes the others, so a sender
+    /// inserting the same record twice has to send all of it, not only what
+    /// changed. Names a column of the record's own, non-null and ordered.
+    Latest { version: &'static str },
+}
+
 /// Every type the store holds implements Record.
 pub trait Record: Sized + 'static {
     /// Where this type is stored — must be unique across every `Record` type.
@@ -127,29 +135,34 @@ pub trait Record: Sized + 'static {
         Columns::new(columns)
     }
 
-    /// What rows are clustered by within one project — the column this type's
-    /// commonest lookup filters on, so a merged file's row groups each cover a
-    /// contiguous run of it and the rest can be skipped. Which column that is
-    /// depends entirely on how the type is read, so every type answers for
-    /// itself.
-    fn sort_columns() -> Vec<&'static str>;
+    /// How rows sharing a primary key are combined on read. `None` — the
+    /// default — means every row stands alone, which is right for anything
+    /// inserted once.
+    fn merge() -> Option<MergeStrategy> {
+        None
+    }
 
-    /// Tenancy first whatever the type: every user-facing query is scoped to
-    /// one organization and project, so leading with them is what makes row
-    /// groups selective for the reader that matters.
-    fn all_sort_columns() -> Vec<&'static str> {
+    /// What identifies one record of this type, tenancy aside. Rows are
+    /// written in this order, so the rows describing one record sit together —
+    /// which is what lets a reader skip the rest and a merge collapse them in
+    /// one pass.
+    fn primary_key() -> Vec<&'static str>;
+
+    /// Tenancy leads: every query is scoped to one project, and two projects
+    /// can mint the same id without describing the same record.
+    fn all_primary_key() -> Vec<&'static str> {
         let mut columns = vec![ORGANIZATION_ID, PROJECT_ID];
-        columns.extend(Self::sort_columns());
+        columns.extend(Self::primary_key());
         columns
     }
 
     fn sorted(batch: RecordBatch) -> Result<RecordBatch, ArrowError> {
-        let columns: Vec<SortColumn> = Self::all_sort_columns()
+        let columns: Vec<SortColumn> = Self::all_primary_key()
             .iter()
             .map(|name| SortColumn {
                 values: batch
                     .column_by_name(name)
-                    .expect("sort_columns names a column in the schema")
+                    .expect("primary_key names a column in the schema")
                     .clone(),
                 options: None,
             })
@@ -192,8 +205,8 @@ mod tests {
             vec![Column::new("project_id", |d| &d.common.project_id)]
         }
 
-        fn sort_columns() -> Vec<&'static str> {
-            vec![]
+        fn primary_key() -> Vec<&'static str> {
+            vec!["project_id"]
         }
     }
 
