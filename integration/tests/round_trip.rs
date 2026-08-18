@@ -51,7 +51,7 @@ async fn written(spans: Vec<Span>) -> Arc<dyn ObjectStore> {
 
 async fn catalog(store: Arc<dyn ObjectStore>) -> Catalog {
     let catalog = Catalog::new(store).unwrap();
-    catalog.register::<Span>().unwrap();
+    catalog.register::<Span>().await.unwrap();
     catalog
 }
 
@@ -231,7 +231,6 @@ async fn a_tag_filters() {
 /// A cron checking in as it goes inserts the same span more than once. It is
 /// one span, and the newest insert wins.
 #[tokio::test]
-#[ignore = "spans_merged is not registered yet"]
 async fn the_newest_insert_wins() {
     let started = at(17, 9);
 
@@ -264,4 +263,25 @@ async fn the_newest_insert_wins() {
          | s1      | 2026-08-17T10:00:00Z |\n\
          +---------+----------------------+"
     );
+}
+
+/// The merged view ranks rows, and a filter cannot be pushed below a window
+/// without changing which row ranks first — so a time filter on the merged
+/// table reads every partition, where the stored table reads one.
+#[tokio::test]
+#[ignore = "merged reads do not prune yet"]
+async fn a_merged_read_prunes_partitions() {
+    let store = written(vec![
+        span("aaa", "monday", at(17, 9)),
+        span("aaa", "tuesday", at(18, 9)),
+    ])
+    .await;
+
+    let plan = explain(
+        &catalog(store).await,
+        "select count(*) from spans where received_at >= timestamp '2026-08-18T00:00:00Z'",
+    )
+    .await;
+
+    assert!(!plan.contains("partition=2026-08-17"), "{plan}");
 }
