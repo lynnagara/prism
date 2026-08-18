@@ -1,17 +1,13 @@
 [package]
-name = "integration"
+name = "compact"
 version = "0.1.0"
 edition = "2024"
-publish = false
 
 [dependencies]
-
-[dev-dependencies]
-chrono = { workspace = true }
-compact = { workspace = true }
 datafusion = { workspace = true }
 futures = "0.3.34"
-ingest = { workspace = true }
-query = { workspace = true }
 schema = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

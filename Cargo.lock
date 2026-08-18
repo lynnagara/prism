@@ -510,6 +510,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "compact"
+version = "0.1.0"
+dependencies = [
+ "datafusion",
+ "futures",
+ "schema",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "compression-codecs"
 version = "0.4.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1792,7 +1803,9 @@ name = "integration"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "compact",
  "datafusion",
+ "futures",
  "ingest",
  "query",
  "schema",

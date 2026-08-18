@@ -1,10 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["ingest", "integration", "query", "schema"]
+members = ["compact", "ingest", "integration", "query", "schema"]
 
 [workspace.dependencies]
 chrono = "0.4.45"
 datafusion = "54.1.0"
+compact = { path = "compact" }
 ingest = { path = "ingest" }
 integration = { path = "integration" }
 query = { path = "query" }
