@@ -133,7 +133,6 @@ async fn put(store: &Arc<dyn ObjectStore>, name: &str, spans: &[Span]) {
 /// land — and a failed delete leaves them indefinitely. Reading both counts
 /// those rows twice.
 #[tokio::test]
-#[ignore = "a merged file's sources are still read until LiveStore hides them"]
 async fn a_replaced_file_is_not_read() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
 

@@ -7,7 +7,7 @@ edition = "2024"
 datafusion = { workspace = true }
 futures = "0.3.34"
 schema = { workspace = true }
-uuid = { workspace = true }
+store = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

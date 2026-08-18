@@ -16,17 +16,10 @@ use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::prelude::{ParquetReadOptions, SessionConfig, SessionContext, col};
 use futures::{StreamExt, TryStreamExt};
 use schema::record::Record;
-use uuid::Uuid;
-
-/// Where the store is mounted while a merge reads it. Addressing only —
-/// datafusion keys registered stores by url — so it never reaches a path.
-const OBJECT_STORE_URL: &str = "prism://store";
+use store::OBJECT_STORE_URL;
+use store::merged;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-
-/// Delimits the ids packed into a merged filename. Ids are written
-/// as unhypenated uuids.
-const SEPARATOR: char = '_';
 
 /// Files per merge. A merge names every source in one filename, and a store
 /// backed by files bounds that at 255 bytes rather than s3's looser 1024 per
@@ -65,7 +58,7 @@ impl Compactor {
 
     /// One batch of sources into one file, deleting them once it lands.
     async fn merge<T: Record>(&self, sources: &[ObjectMeta]) -> Result<Path> {
-        let path = directory_of(&sources[0].location).join(filename(sources));
+        let path = directory_of(&sources[0].location).join(merged::filename(sources));
         let mut stream = self
             .merge_sorted::<T>(sources)
             .await?
@@ -122,33 +115,11 @@ impl Compactor {
     }
 }
 
-/// A new id, then each source's own — not the ids those in turn replaced, or
-/// the name would grow at every level until it passed the key limit.
-fn filename(sources: &[ObjectMeta]) -> String {
-    let mut name = Uuid::now_v7().simple().to_string();
-    for source in sources {
-        name.push(SEPARATOR);
-        name.push_str(own_id(
-            source.location.filename().expect("sources are files"),
-        ));
-    }
-    name.push_str(".parquet");
-    name
-}
-
 /// The partition a file sits in.
 fn directory_of(path: &Path) -> Path {
     let mut parts: Vec<_> = path.parts().collect();
     parts.pop();
     Path::from_iter(parts)
-}
-
-fn own_id(name: &str) -> &str {
-    name.strip_suffix(".parquet")
-        .unwrap_or(name)
-        .split(SEPARATOR)
-        .next()
-        .expect("split yields at least one field")
 }
 
 #[cfg(test)]

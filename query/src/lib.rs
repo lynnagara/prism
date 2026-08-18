@@ -14,13 +14,9 @@ use datafusion::execution::object_store::ObjectStoreUrl;
 use datafusion::object_store::ObjectStore;
 use datafusion::prelude::{SessionContext, col};
 use schema::record::{MergeStrategy, PARTITION_COLUMN, Record};
+use store::{LiveStore, OBJECT_STORE_URL};
 
 use crate::table::PartitionedTable;
-
-/// Backend-agnostic url the object store is mounted under, so table paths are
-/// identical whatever object storage resolves them. Datafusion keys registered
-/// stores by scheme *and* host, so both must appear here.
-const OBJECT_STORE_URL: &str = "prism://store";
 
 pub struct Catalog {
     ctx: SessionContext,
@@ -29,7 +25,13 @@ pub struct Catalog {
 impl Catalog {
     pub fn new(store: Arc<dyn ObjectStore>) -> Result<Self> {
         let ctx = SessionContext::new();
-        ctx.register_object_store(ObjectStoreUrl::parse(OBJECT_STORE_URL)?.as_ref(), store);
+
+        // Wrapped here rather than by the caller, so no query can be handed a
+        // store that still lists the files a merge replaced.
+        ctx.register_object_store(
+            ObjectStoreUrl::parse(OBJECT_STORE_URL)?.as_ref(),
+            Arc::new(LiveStore::new(store)),
+        );
 
         Ok(Self { ctx })
     }

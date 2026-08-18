@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["compact", "ingest", "integration", "query", "schema"]
+members = ["compact", "ingest", "integration", "query", "schema", "store"]
 
 [workspace.dependencies]
 chrono = "0.4.45"
@@ -10,5 +10,6 @@ ingest = { path = "ingest" }
 integration = { path = "integration" }
 query = { path = "query" }
 schema = { path = "schema" }
+store = { path = "store" }
 tokio = "1.53.1"
 uuid = { version = "1.24.1", features = ["v7"] }
