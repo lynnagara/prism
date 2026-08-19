@@ -1,14 +1,16 @@
 [workspace]
 resolver = "3"
-members = ["compact", "ingest", "integration", "query", "schema", "store"]
+members = ["compact", "ingest", "integration", "prism", "query", "schema", "store"]
 
 [workspace.dependencies]
 chrono = "0.4.45"
+clap = { version = "4", features = ["derive"] }
 datafusion = "54.1.0"
 compact = { path = "compact" }
 ingest = { path = "ingest" }
 integration = { path = "integration" }
 query = { path = "query" }
+prism = { path = "prism" }
 schema = { path = "schema" }
 store = { path = "store" }
 tokio = "1.53.1"
