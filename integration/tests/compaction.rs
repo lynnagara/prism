@@ -19,6 +19,10 @@ fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 17, hour, 0, 0).unwrap()
 }
 
+fn tuesday(hour: u32) -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 8, 18, hour, 0, 0).unwrap()
+}
+
 fn span(span_id: &str, received_at: DateTime<Utc>) -> Span {
     Span {
         common: Common {
@@ -340,4 +344,34 @@ async fn compaction_collapses_superseded_rows() {
             .contains("2026-08-17T10:00:00Z"),
         "the newest insert is the one kept"
     );
+}
+
+/// Compacts every partition it finds, leaving the newest alone: it is the only
+/// one still being written to, so merging its two files is work the next flush
+/// undoes.
+#[tokio::test]
+async fn compact_all_leaves_the_newest_partition() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    written(
+        store.clone(),
+        vec![span("mon1", at(9)), span("mon2", at(10))],
+    )
+    .await;
+    written(
+        store.clone(),
+        vec![span("tue1", tuesday(9)), span("tue2", tuesday(10))],
+    )
+    .await;
+
+    assert_eq!(listing(&store).await.len(), 4, "two files per partition");
+
+    // Tuesday exists, so monday is closed; tuesday is the live one.
+    Compactor::new(store.clone())
+        .compact_all::<Span>()
+        .await
+        .unwrap();
+
+    let after = listing(&store).await;
+    assert_eq!(after.len(), 3, "monday merged, tuesday untouched");
+    assert_eq!(span_ids(store).await, ["mon1", "mon2", "tue1", "tue2"]);
 }

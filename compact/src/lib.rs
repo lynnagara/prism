@@ -43,12 +43,38 @@ impl Compactor {
         Self { store }
     }
 
-    /// Merges `directory`'s files until no batch is left worth merging, and
-    /// answers what it wrote.
-    ///
-    /// `closed` says no more files are coming, which is what makes a partial
-    /// batch worth merging — while a partition is still being written to, a
-    /// merge now is one the next file undoes.
+    /// Compacts every partition of `T`. A partition is closed once a later one
+    /// exists: partitions are named for arrival time, which only moves forward,
+    /// so the newest is the only one still being written to.
+    pub async fn compact_all<T: Record>(&self) -> Result<Vec<Path>> {
+        let prefix = Path::from(T::TABLE);
+        // Rfc3339 sorts the same as time, so reversed this is newest first —
+        // the order queries care about, and the order to be interrupted in.
+        let mut partitions: Vec<Path> = self
+            .store
+            .list_with_delimiter(Some(&prefix))
+            .await?
+            .common_prefixes
+            .into_iter()
+            .filter(|directory| {
+                directory
+                    .parts()
+                    .next_back()
+                    .is_some_and(|name| T::partition_at(name.as_ref()).is_some())
+            })
+            .collect();
+        partitions.sort();
+        partitions.reverse();
+
+        let mut written = Vec::new();
+        for (index, directory) in partitions.iter().enumerate() {
+            let closed = index > 0;
+            written.extend(self.compact::<T>(directory, closed).await?);
+        }
+        Ok(written)
+    }
+
+    /// Merges `directory`'s files until no batch is left worth merging.
     pub async fn compact<T: Record>(&self, directory: &Path, closed: bool) -> Result<Vec<Path>> {
         let mut sources: Vec<ObjectMeta> = self.store.list(Some(directory)).try_collect().await?;
         let mut written = Vec::new();

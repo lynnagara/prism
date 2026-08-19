@@ -118,6 +118,18 @@ pub trait Record: Sized + 'static {
         )
     }
 
+    /// Which partition a directory holds, from the name [`Self::partition_dir`]
+    /// gave it. `None` for anything else under the prefix.
+    ///
+    /// Reading it back beats recomputing the names: partitions written under an
+    /// earlier `GRANULARITY` keep the shape they were written with.
+    fn partition_at(directory: &str) -> Option<DateTime<Utc>> {
+        directory
+            .strip_prefix(&format!("{PARTITION_COLUMN}="))
+            .and_then(|start| DateTime::parse_from_rfc3339(start).ok())
+            .map(|start| start.with_timezone(&Utc))
+    }
+
     /// Directory holding one partition's objects, from any instant inside it.
     fn directory(instant: DateTime<Utc>) -> String {
         let start = Timestamp::from(instant).partition_start(Self::GRANULARITY);
