@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
 use opentelemetry_proto::tonic::trace::v1::{Span as OtlpSpan, status::StatusCode};
+use prost::Message;
 use schema::record::Common;
 use schema::spans::{Span, Status};
 use schema::types::{Id, Tags, Timestamp};
@@ -11,6 +12,14 @@ use schema::types::{Id, Tags, Timestamp};
 /// Hardcoded for demo.
 const ORGANIZATION_ID: &str = "1";
 const PROJECT_ID: &str = "1";
+
+/// OTLP puts protobuf on the wire
+pub fn spans_from_bytes(
+    body: &[u8],
+    received_at: DateTime<Utc>,
+) -> Result<Vec<Span>, prost::DecodeError> {
+    Ok(spans(ExportTraceServiceRequest::decode(body)?, received_at))
+}
 
 /// Every span in the request, whatever resource or scope it arrived under.
 /// Those groupings say where a span came from, not what it is, and prism stores
