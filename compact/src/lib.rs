@@ -34,20 +34,22 @@ impl Compactor {
         Self { store }
     }
 
-    /// Merges `directory`'s files, at most [`SOURCES_PER_MERGE`] at a time,
-    /// until one is left. Answers what it wrote, newest last.
-    pub async fn compact<T: Record>(&self, directory: &Path) -> Result<Vec<Path>> {
+    /// Merges `directory`'s files until no batch is left worth merging, and
+    /// answers what it wrote.
+    ///
+    /// `closed` says no more files are coming, which is what makes a partial
+    /// batch worth merging — while a partition is still being written to, a
+    /// merge now is one the next file undoes.
+    pub async fn compact<T: Record>(&self, directory: &Path, closed: bool) -> Result<Vec<Path>> {
         let mut sources: Vec<ObjectMeta> = self.store.list(Some(directory)).try_collect().await?;
         let mut written = Vec::new();
 
-        while sources.len() > 1 {
-            let batch: Vec<ObjectMeta> = sources
-                .drain(..sources.len().min(SOURCES_PER_MERGE))
-                .collect();
+        while let Some(batch) = next_batch(&sources, closed) {
             let merged = self.merge::<T>(&batch).await?;
 
-            // Merged files are themselves sources for the next pass, so a
-            // partition of any size ends as one file rather than as batches.
+            // The merged file is a source for the next pass, so a partition
+            // ends as one file rather than as a pile of batch outputs.
+            sources.retain(|source| !batch.iter().any(|used| used.location == source.location));
             sources.push(self.store.head(&merged).await?);
             written.push(merged);
         }
@@ -107,6 +109,14 @@ impl Compactor {
 
         Ok(ctx.read_parquet(paths, options).await?.sort(order)?)
     }
+}
+
+/// The next batch worth merging, or `None` while it is better to wait.
+fn next_batch(sources: &[ObjectMeta], closed: bool) -> Option<Vec<ObjectMeta>> {
+    let batch: Vec<ObjectMeta> = sources.iter().take(SOURCES_PER_MERGE).cloned().collect();
+
+    let full = batch.len() == SOURCES_PER_MERGE || closed;
+    (full && batch.len() >= 2).then_some(batch)
 }
 
 /// The partition a file sits in.

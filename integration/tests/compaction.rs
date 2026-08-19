@@ -88,7 +88,7 @@ async fn a_partition_merges_into_one_file() {
 
     let directory = Path::from(Span::directory(at(9)));
     let merged = Compactor::new(store.clone())
-        .compact::<Span>(&directory)
+        .compact::<Span>(&directory, true)
         .await
         .unwrap();
 
@@ -106,7 +106,7 @@ async fn one_file_is_left_alone() {
 
     let directory = Path::from(Span::directory(at(9)));
     let merged = Compactor::new(store.clone())
-        .compact::<Span>(&directory)
+        .compact::<Span>(&directory, true)
         .await
         .unwrap();
 
@@ -159,7 +159,7 @@ async fn more_files_than_one_merge_can_name() {
     assert_eq!(listing(&store).await.len(), 9);
 
     Compactor::new(store.clone())
-        .compact::<Span>(&Path::from(Span::directory(at(9))))
+        .compact::<Span>(&Path::from(Span::directory(at(9))), true)
         .await
         .unwrap();
 
@@ -188,7 +188,7 @@ async fn a_merged_file_splits_into_row_groups() {
     }
 
     Compactor::new(store.clone())
-        .compact::<Span>(&Path::from(Span::directory(at(9))))
+        .compact::<Span>(&Path::from(Span::directory(at(9))), true)
         .await
         .unwrap();
 
@@ -212,4 +212,34 @@ async fn a_merged_file_splits_into_row_groups() {
         groups > 1,
         "27000 rows should not be one row group, got {groups}"
     );
+}
+
+/// A partition still being written to waits for a full batch: merging two of
+/// its files now is work the next flush undoes.
+#[tokio::test]
+async fn an_open_partition_waits_for_a_full_batch() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    written(store.clone(), vec![span("a", at(9)), span("b", at(10))]).await;
+
+    let written_paths = Compactor::new(store.clone())
+        .compact::<Span>(&Path::from(Span::directory(at(9))), false)
+        .await
+        .unwrap();
+
+    assert!(written_paths.is_empty(), "two files is not a full batch");
+    assert_eq!(listing(&store).await.len(), 2);
+}
+
+/// Closed, the same two files merge — there is no later batch to wait for.
+#[tokio::test]
+async fn a_closed_partition_merges_a_partial_batch() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    written(store.clone(), vec![span("a", at(9)), span("b", at(10))]).await;
+
+    Compactor::new(store.clone())
+        .compact::<Span>(&Path::from(Span::directory(at(9))), true)
+        .await
+        .unwrap();
+
+    assert_eq!(listing(&store).await.len(), 1);
 }
