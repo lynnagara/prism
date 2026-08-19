@@ -67,12 +67,10 @@ fn span(trace: &str, span_id_label: &str, started_at: DateTime<Utc>) -> Span {
 /// Uses the real writer, so a layout change the reader doesn't follow fails.
 async fn written(spans: Vec<Span>) -> Arc<dyn ObjectStore> {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let mut buffer: Buffer<Span> = Buffer::new(Writer::new(store.clone()));
+    let buffer: Buffer<Span> = Buffer::new(Writer::new(store.clone()));
 
-    for span in spans {
-        buffer.push(span);
-    }
-    buffer.flush().await.expect("write to succeed");
+    buffer.push(spans).expect("room to queue");
+    buffer.shutdown().await;
 
     store
 }

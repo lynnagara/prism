@@ -62,14 +62,20 @@ fn span(span_id_label: &str, received_at: DateTime<Utc>) -> Span {
     }
 }
 
-/// One file per flush, which is what gives a partition several to merge.
+/// A buffer writes what it holds when it shuts down, so one per span is what
+/// gives a partition several files to merge.
 async fn written(store: Arc<dyn ObjectStore>, spans: Vec<Span>) {
-    let mut buffer: Buffer<Span> = Buffer::new(Writer::new(store));
-
     for span in spans {
-        buffer.push(span);
-        buffer.flush().await.expect("write to succeed");
+        file(&store, vec![span]).await;
     }
+}
+
+/// Everything given at once, so it lands in one file per partition.
+async fn file(store: &Arc<dyn ObjectStore>, spans: Vec<Span>) {
+    let buffer: Buffer<Span> = Buffer::new(Writer::new(store.clone()));
+
+    buffer.push(spans).expect("room to queue");
+    buffer.shutdown().await;
 }
 
 async fn listing(store: &Arc<dyn ObjectStore>) -> Vec<ObjectMeta> {
@@ -206,14 +212,11 @@ async fn more_files_than_one_merge_can_name() {
 async fn a_merged_file_splits_into_row_groups() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
 
-    // Three flushes of nine thousand, so the merge crosses the row group size
+    // Three files of nine thousand, so the merge crosses the row group size
     // that no single ingest file reaches.
-    for file in 0..3 {
-        let mut buffer: Buffer<Span> = Buffer::new(Writer::new(store.clone()));
-        for i in 0..9_000 {
-            buffer.push(span(&format!("s{file}-{i:05}"), at(9)));
-        }
-        buffer.flush().await.unwrap();
+    for id in 0..3 {
+        let spans = (0..9_000).map(|i| span(&format!("s{id}-{i:05}"), at(9)));
+        file(&store, spans.collect()).await;
     }
 
     Compactor::new(store.clone())
@@ -280,16 +283,11 @@ async fn a_closed_partition_merges_a_partial_batch() {
 async fn a_large_file_is_not_rewritten_to_absorb_crumbs() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
 
-    let mut buffer: Buffer<Span> = Buffer::new(Writer::new(store.clone()));
-    for i in 0..50_000 {
-        buffer.push(span(&format!("big{i:05}"), at(9)));
-    }
-    buffer.flush().await.unwrap();
+    let big = (0..50_000).map(|i| span(&format!("big{i:05}"), at(9)));
+    file(&store, big.collect()).await;
 
-    for i in 0..5 {
-        buffer.push(span(&format!("crumb{i}"), at(9)));
-        buffer.flush().await.unwrap();
-    }
+    let crumbs = (0..5).map(|i| span(&format!("crumb{i}"), at(9)));
+    written(store.clone(), crumbs.collect()).await;
 
     // A one-row file still costs a parquet footer, so the large one has to be
     // genuinely large for the spread to separate them.
@@ -311,16 +309,11 @@ async fn a_large_file_is_not_rewritten_to_absorb_crumbs() {
 async fn a_closed_partition_absorbs_crumbs_into_a_large_file() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
 
-    let mut buffer: Buffer<Span> = Buffer::new(Writer::new(store.clone()));
-    for i in 0..50_000 {
-        buffer.push(span(&format!("big{i:05}"), at(9)));
-    }
-    buffer.flush().await.unwrap();
+    let big = (0..50_000).map(|i| span(&format!("big{i:05}"), at(9)));
+    file(&store, big.collect()).await;
 
-    for i in 0..5 {
-        buffer.push(span(&format!("crumb{i}"), at(9)));
-        buffer.flush().await.unwrap();
-    }
+    let crumbs = (0..5).map(|i| span(&format!("crumb{i}"), at(9)));
+    written(store.clone(), crumbs.collect()).await;
 
     Compactor::new(store.clone())
         .compact::<Span>(&Path::from(Span::directory(at(9))), true)
