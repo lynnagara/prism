@@ -72,7 +72,7 @@ mod tests {
     use futures::StreamExt;
     use schema::record::Common;
     use schema::spans::{Span, Status};
-    use schema::types::{Tags, Timestamp};
+    use schema::types::{SpanId, Tags, Timestamp, TraceId};
     use std::sync::Arc;
 
     fn span(received_at: DateTime<Utc>) -> Span {
@@ -82,8 +82,8 @@ mod tests {
                 project_id: "91733".to_string(),
                 received_at: Timestamp::from(received_at),
             },
-            span_id: "a".repeat(16),
-            trace_id: "c".repeat(32),
+            span_id: SpanId::from([0xaa; 8]),
+            trace_id: TraceId::from([0xcc; 16]),
             parent_span_id: None,
             name: "GET /checkout".to_string(),
             started_at: Timestamp::from(received_at),

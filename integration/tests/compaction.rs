@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
 use compact::Compactor;
-use datafusion::arrow::array::Array;
+use datafusion::arrow::array::{Array, FixedSizeBinaryArray};
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::object_store::memory::InMemory;
 use datafusion::object_store::path::Path;
@@ -13,7 +13,27 @@ use ingest::writer::Writer;
 use query::Catalog;
 use schema::record::{Common, Record};
 use schema::spans::{Span, Status};
-use schema::types::{Tags, Timestamp};
+use schema::types::{SpanId, Tags, Timestamp, TraceId};
+
+/// Ids are bytes, and a test wants to read them: a short label padded out is
+/// legible in a fixture and comes back as itself.
+fn span_id(label: &str) -> SpanId {
+    let mut bytes = [0; 8];
+    bytes[..label.len()].copy_from_slice(label.as_bytes());
+    SpanId::from(bytes)
+}
+
+fn trace_id(label: &str) -> TraceId {
+    let mut bytes = [0; 16];
+    bytes[..label.len()].copy_from_slice(label.as_bytes());
+    TraceId::from(bytes)
+}
+
+fn label(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .trim_end_matches('\0')
+        .to_string()
+}
 
 fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 17, hour, 0, 0).unwrap()
@@ -23,15 +43,15 @@ fn tuesday(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, 18, hour, 0, 0).unwrap()
 }
 
-fn span(span_id: &str, received_at: DateTime<Utc>) -> Span {
+fn span(span_id_label: &str, received_at: DateTime<Utc>) -> Span {
     Span {
         common: Common {
             organization_id: "4812".to_string(),
             project_id: "91733".to_string(),
             received_at: Timestamp::from(received_at),
         },
-        span_id: span_id.to_string(),
-        trace_id: "aaa".to_string(),
+        span_id: span_id(span_id_label),
+        trace_id: trace_id("aaa"),
         parent_span_id: None,
         name: "GET /checkout".to_string(),
         started_at: Timestamp::from(received_at),
@@ -68,10 +88,14 @@ async fn span_ids(store: Arc<dyn ObjectStore>) -> Vec<String> {
     batches
         .iter()
         .flat_map(|batch| {
-            let ids =
-                datafusion::arrow::array::as_string_array(batch.column_by_name("span_id").unwrap());
+            let ids = batch
+                .column_by_name("span_id")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<FixedSizeBinaryArray>()
+                .unwrap();
             (0..ids.len())
-                .map(|i| ids.value(i).to_string())
+                .map(|i| label(ids.value(i)))
                 .collect::<Vec<_>>()
         })
         .collect()
@@ -257,7 +281,7 @@ async fn a_large_file_is_not_rewritten_to_absorb_crumbs() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
 
     let mut buffer: Buffer<Span> = Buffer::new(Writer::new(store.clone()));
-    for i in 0..20_000 {
+    for i in 0..50_000 {
         buffer.push(span(&format!("big{i:05}"), at(9)));
     }
     buffer.flush().await.unwrap();
@@ -288,7 +312,7 @@ async fn a_closed_partition_absorbs_crumbs_into_a_large_file() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
 
     let mut buffer: Buffer<Span> = Buffer::new(Writer::new(store.clone()));
-    for i in 0..20_000 {
+    for i in 0..50_000 {
         buffer.push(span(&format!("big{i:05}"), at(9)));
     }
     buffer.flush().await.unwrap();

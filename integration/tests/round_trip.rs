@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone, Utc};
-use datafusion::arrow::array::{Array, as_string_array};
+use datafusion::arrow::array::{Array, FixedSizeBinaryArray};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::object_store::ObjectStore;
@@ -11,21 +11,49 @@ use ingest::writer::Writer;
 use query::Catalog;
 use schema::record::Common;
 use schema::spans::{Span, Status};
-use schema::types::{Tags, Timestamp};
+use schema::types::{SpanId, Tags, Timestamp, TraceId};
+
+/// Ids are bytes, and a test wants to read them: a short label padded out is
+/// legible in a fixture and comes back as itself.
+fn span_id(label: &str) -> SpanId {
+    let mut bytes = [0; 8];
+    assert!(
+        label.len() <= bytes.len(),
+        "a span id label is 8 bytes at most"
+    );
+    bytes[..label.len()].copy_from_slice(label.as_bytes());
+    SpanId::from(bytes)
+}
+
+fn trace_id(label: &str) -> TraceId {
+    let mut bytes = [0; 16];
+    assert!(
+        label.len() <= bytes.len(),
+        "a trace id label is 16 bytes at most"
+    );
+    bytes[..label.len()].copy_from_slice(label.as_bytes());
+    TraceId::from(bytes)
+}
+
+fn label(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .trim_end_matches('\0')
+        .to_string()
+}
 
 fn at(day: u32, hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 8, day, hour, 0, 0).unwrap()
 }
 
-fn span(trace: &str, span_id: &str, started_at: DateTime<Utc>) -> Span {
+fn span(trace: &str, span_id_label: &str, started_at: DateTime<Utc>) -> Span {
     Span {
         common: Common {
             organization_id: "4812".to_string(),
             project_id: "91733".to_string(),
             received_at: Timestamp::from(started_at),
         },
-        span_id: span_id.to_string(),
-        trace_id: trace.to_string(),
+        span_id: span_id(span_id_label),
+        trace_id: trace_id(trace),
         parent_span_id: None,
         name: "GET /checkout".to_string(),
         started_at: Timestamp::from(started_at),
@@ -59,9 +87,14 @@ fn span_ids(batches: &[RecordBatch]) -> Vec<String> {
     batches
         .iter()
         .flat_map(|batch| {
-            let strings = as_string_array(batch.column_by_name("span_id").unwrap());
-            (0..strings.len())
-                .map(|i| strings.value(i).to_string())
+            let ids = batch
+                .column_by_name("span_id")
+                .unwrap()
+                .as_any()
+                .downcast_ref::<FixedSizeBinaryArray>()
+                .unwrap();
+            (0..ids.len())
+                .map(|i| label(ids.value(i)))
                 .collect::<Vec<_>>()
         })
         .collect()
@@ -69,7 +102,7 @@ fn span_ids(batches: &[RecordBatch]) -> Vec<String> {
 
 #[tokio::test]
 async fn a_written_span_reads_back() {
-    let store = written(vec![span(&"c".repeat(32), "a1", at(17, 9))]).await;
+    let store = written(vec![span("ccc", "a1", at(17, 9))]).await;
 
     let batches = catalog(store)
         .await
@@ -77,13 +110,16 @@ async fn a_written_span_reads_back() {
         .await
         .unwrap();
 
+    assert_eq!(span_ids(&batches), ["a1"]);
     assert_eq!(
-        pretty_format_batches(&batches).unwrap().to_string(),
-        "+---------+---------------+--------+\n\
-         | span_id | name          | status |\n\
-         +---------+---------------+--------+\n\
-         | a1      | GET /checkout | ok     |\n\
-         +---------+---------------+--------+"
+        pretty_format_batches(&batches)
+            .unwrap()
+            .to_string()
+            .lines()
+            .nth(3)
+            .unwrap(),
+        "| 6131000000000000 | GET /checkout | ok     |",
+        "ids read back as the bytes they are"
     );
 }
 
@@ -255,13 +291,13 @@ async fn the_newest_insert_wins() {
         .await
         .unwrap();
 
-    assert_eq!(
-        pretty_format_batches(&merged).unwrap().to_string(),
-        "+---------+----------------------+\n\
-         | span_id | ended_at             |\n\
-         +---------+----------------------+\n\
-         | s1      | 2026-08-17T10:00:00Z |\n\
-         +---------+----------------------+"
+    assert_eq!(span_ids(&merged), ["s1"], "one span survives");
+    assert!(
+        pretty_format_batches(&merged)
+            .unwrap()
+            .to_string()
+            .contains("2026-08-17T10:00:00Z"),
+        "carrying the newer insert's end"
     );
 }
 

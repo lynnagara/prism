@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
+use std::fmt;
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use datafusion::arrow::array::{
-    ArrayRef, MapBuilder, MapFieldNames, StringArray, StringBuilder, TimestampMicrosecondArray,
+    ArrayRef, FixedSizeBinaryBuilder, MapBuilder, MapFieldNames, StringArray, StringBuilder,
+    TimestampMicrosecondArray,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Fields, TimeUnit};
 
@@ -76,6 +78,47 @@ impl ArrowField for String {
         Arc::new(StringArray::from_iter(
             values.map(|value| value.map(String::as_str)),
         ))
+    }
+}
+
+/// An OpenTelemetry id — 16 bytes for a trace, 8 for a span — stored as bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Id<const N: usize>([u8; N]);
+
+pub type TraceId = Id<16>;
+pub type SpanId = Id<8>;
+
+impl<const N: usize> From<[u8; N]> for Id<N> {
+    fn from(bytes: [u8; N]) -> Self {
+        Id(bytes)
+    }
+}
+
+/// Hex, which is how an id is written everywhere a person sees one — a log
+/// line, a url, a filter someone pastes.
+impl<const N: usize> fmt::Display for Id<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in &self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+impl<const N: usize> ArrowField for Id<N> {
+    fn data_type() -> DataType {
+        DataType::FixedSizeBinary(N as i32)
+    }
+
+    fn build_array<'a>(values: impl Iterator<Item = Option<&'a Self>>) -> ArrayRef {
+        let mut builder = FixedSizeBinaryBuilder::new(N as i32);
+        for value in values {
+            match value {
+                Some(id) => builder.append_value(id.0).expect("the width is fixed"),
+                None => builder.append_null(),
+            }
+        }
+        Arc::new(builder.finish())
     }
 }
 

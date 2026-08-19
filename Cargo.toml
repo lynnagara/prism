@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["compact", "ingest", "integration", "prism", "query", "schema", "store"]
+members = ["compact", "ingest", "integration", "otlp", "prism", "query", "schema", "store"]
 
 [workspace.dependencies]
 chrono = "0.4.45"
@@ -11,6 +11,7 @@ ingest = { path = "ingest" }
 integration = { path = "integration" }
 query = { path = "query" }
 prism = { path = "prism" }
+otlp = { path = "otlp" }
 schema = { path = "schema" }
 store = { path = "store" }
 tokio = "1.53.1"

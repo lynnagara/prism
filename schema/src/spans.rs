@@ -4,7 +4,7 @@ use datafusion::arrow::array::{ArrayRef, StringArray};
 use datafusion::arrow::datatypes::DataType;
 
 use crate::record::{Column, Common, MergeStrategy, RECEIVED_AT, Record};
-use crate::types::{ArrowField, Granularity, Tags, Timestamp};
+use crate::types::{ArrowField, Granularity, SpanId, Tags, Timestamp, TraceId};
 
 /// Span status codes. `Unset` is default.
 pub enum Status {
@@ -42,9 +42,9 @@ impl ArrowField for Status {
 /// absent.
 pub struct Span {
     pub common: Common,
-    pub span_id: String,
-    pub trace_id: String,
-    pub parent_span_id: Option<String>,
+    pub span_id: SpanId,
+    pub trace_id: TraceId,
+    pub parent_span_id: Option<SpanId>,
     pub name: String,
     pub started_at: Timestamp,
     pub ended_at: Option<Timestamp>,
@@ -117,8 +117,8 @@ mod tests {
                     project_id: "91733".to_string(),
                     received_at: at(9),
                 },
-                span_id: "a".repeat(16),
-                trace_id: "c".repeat(32),
+                span_id: SpanId::from([0xaa; 8]),
+                trace_id: TraceId::from([0xcc; 16]),
                 parent_span_id: None,
                 name: "GET /checkout".to_string(),
                 started_at: at(9),
@@ -133,9 +133,9 @@ mod tests {
                     project_id: "91733".to_string(),
                     received_at: at(9),
                 },
-                span_id: "b".repeat(16),
-                trace_id: "c".repeat(32),
-                parent_span_id: Some("a".repeat(16)),
+                span_id: SpanId::from([0xbb; 8]),
+                trace_id: TraceId::from([0xcc; 16]),
+                parent_span_id: Some(SpanId::from([0xaa; 8])),
                 name: "charge card".to_string(),
                 started_at: at(9),
                 ended_at: None,
@@ -163,7 +163,10 @@ mod tests {
         let batch = Span::to_record_batch(&spans()).unwrap();
 
         assert_eq!(batch.num_rows(), 2);
-        assert_eq!(column(&batch, "span_id"), ["a".repeat(16), "b".repeat(16)]);
+        assert_eq!(
+            column(&batch, "span_id"),
+            ["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb"]
+        );
         assert_eq!(column(&batch, "name"), ["GET /checkout", "charge card"]);
         assert_eq!(column(&batch, "project_id"), ["91733", "91733"]);
         assert_eq!(column(&batch, "status"), ["ok", "unset"]);
@@ -176,7 +179,7 @@ mod tests {
         assert_eq!(column(&batch, "ended_at"), ["2026-08-17T10:00:00Z", "null"]);
         assert_eq!(
             column(&batch, "parent_span_id"),
-            ["null".to_string(), "a".repeat(16)]
+            ["null", "aaaaaaaaaaaaaaaa"]
         );
     }
 }
