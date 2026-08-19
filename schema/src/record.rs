@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use datafusion::arrow::array::ArrayRef;
-use datafusion::arrow::compute::{SortColumn, lexsort_to_indices, take_record_batch};
+use datafusion::arrow::compute::{SortColumn, SortOptions, lexsort_to_indices, take_record_batch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -156,15 +156,33 @@ pub trait Record: Sized + 'static {
         columns
     }
 
+    /// How rows are written: primary key first, then — for a type that merges
+    /// — its version descending, so the row that supersedes the others is the
+    /// first of its run and a reader can take it without looking further.
+    fn write_order() -> Vec<(&'static str, bool)> {
+        let mut order: Vec<(&'static str, bool)> = Self::all_primary_key()
+            .into_iter()
+            .map(|c| (c, true))
+            .collect();
+
+        if let Some(MergeStrategy::Latest { version }) = Self::merge() {
+            order.push((version, false));
+        }
+        order
+    }
+
     fn sorted(batch: RecordBatch) -> Result<RecordBatch, ArrowError> {
-        let columns: Vec<SortColumn> = Self::all_primary_key()
+        let columns: Vec<SortColumn> = Self::write_order()
             .iter()
-            .map(|name| SortColumn {
+            .map(|(name, ascending)| SortColumn {
                 values: batch
                     .column_by_name(name)
-                    .expect("primary_key names a column in the schema")
+                    .expect("write_order names a column in the schema")
                     .clone(),
-                options: None,
+                options: Some(SortOptions {
+                    descending: !ascending,
+                    nulls_first: false,
+                }),
             })
             .collect();
 

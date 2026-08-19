@@ -12,7 +12,7 @@ use datafusion::execution::object_store::ObjectStoreUrl;
 use datafusion::logical_expr::SortExpr;
 use datafusion::object_store::path::Path;
 use datafusion::object_store::{ObjectMeta, ObjectStore, ObjectStoreExt};
-use datafusion::prelude::{ParquetReadOptions, SessionConfig, SessionContext, col};
+use datafusion::prelude::{Expr, ParquetReadOptions, SessionConfig, SessionContext, col};
 use futures::{StreamExt, TryStreamExt};
 use schema::record::Record;
 use store::merged;
@@ -106,9 +106,9 @@ impl Compactor {
             .iter()
             .map(|source| format!("{OBJECT_STORE_URL}/{}", source.location))
             .collect();
-        let order: Vec<SortExpr> = T::all_primary_key()
+        let order: Vec<SortExpr> = T::write_order()
             .iter()
-            .map(|name| col(*name).sort(true, false))
+            .map(|(name, ascending)| col(*name).sort(*ascending, false))
             .collect();
 
         let schema = T::schema();
@@ -116,7 +116,24 @@ impl Compactor {
             .schema(&schema)
             .file_sort_order(vec![order.clone()]);
 
-        Ok(ctx.read_parquet(paths, options).await?.sort(order)?)
+        let merged = ctx
+            .read_parquet(paths, options)
+            .await?
+            .sort(order.clone())?;
+
+        // A type that never supersedes has nothing to collapse: every row of it
+        // is its own record.
+        if T::merge().is_none() {
+            return Ok(merged);
+        }
+
+        let key: Vec<Expr> = T::all_primary_key().iter().map(|name| col(*name)).collect();
+        let columns: Vec<Expr> = schema.fields().iter().map(|f| col(f.name())).collect();
+
+        // Files are written newest first within a key, so the first row of each
+        // is the one that won. Arriving already grouped by that key, it
+        // aggregates in a stream rather than a hash table.
+        Ok(merged.distinct_on(key, columns, Some(order))?)
     }
 }
 

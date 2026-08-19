@@ -3,6 +3,7 @@ use std::sync::Arc;
 use chrono::{DateTime, TimeZone, Utc};
 use compact::Compactor;
 use datafusion::arrow::array::Array;
+use datafusion::arrow::util::pretty::pretty_format_batches;
 use datafusion::object_store::memory::InMemory;
 use datafusion::object_store::path::Path;
 use datafusion::object_store::{ObjectMeta, ObjectStore, ObjectStoreExt};
@@ -274,4 +275,69 @@ async fn a_large_file_is_not_rewritten_to_absorb_crumbs() {
 
     assert!(written_paths.is_empty(), "the large file stays as it is");
     assert_eq!(listing(&store).await.len(), 6);
+}
+
+/// Closed, the same crumbs merge into the large file: rewriting it once costs
+/// less than every later query opening five extra files.
+#[tokio::test]
+async fn a_closed_partition_absorbs_crumbs_into_a_large_file() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+
+    let mut buffer: Buffer<Span> = Buffer::new(Writer::new(store.clone()));
+    for i in 0..20_000 {
+        buffer.push(span(&format!("big{i:05}"), at(9)));
+    }
+    buffer.flush().await.unwrap();
+
+    for i in 0..5 {
+        buffer.push(span(&format!("crumb{i}"), at(9)));
+        buffer.flush().await.unwrap();
+    }
+
+    Compactor::new(store.clone())
+        .compact::<Span>(&Path::from(Span::directory(at(9))), true)
+        .await
+        .unwrap();
+
+    assert_eq!(listing(&store).await.len(), 1);
+}
+
+/// A span inserted twice is one span: compaction keeps the newest and drops
+/// the rest, so a plain read stops seeing both.
+#[tokio::test]
+async fn compaction_collapses_superseded_rows() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+
+    let mut checking_in = span("s1", at(9));
+    let mut finished = span("s1", at(9));
+    finished.common.received_at = Timestamp::from(at(10));
+    finished.ended_at = Some(Timestamp::from(at(10)));
+    checking_in.ended_at = None;
+
+    written(store.clone(), vec![checking_in]).await;
+    written(store.clone(), vec![finished]).await;
+
+    assert_eq!(span_ids(store.clone()).await, ["s1", "s1"], "both stored");
+
+    Compactor::new(store.clone())
+        .compact::<Span>(&Path::from(Span::directory(at(9))), true)
+        .await
+        .unwrap();
+
+    assert_eq!(span_ids(store.clone()).await, ["s1"], "one row survives");
+
+    let catalog = Catalog::new(store).unwrap();
+    catalog.register::<Span>().await.unwrap();
+    let batches = catalog
+        .sql_cross_org("select ended_at from spans")
+        .await
+        .unwrap();
+
+    assert!(
+        pretty_format_batches(&batches)
+            .unwrap()
+            .to_string()
+            .contains("2026-08-17T10:00:00Z"),
+        "the newest insert is the one kept"
+    );
 }

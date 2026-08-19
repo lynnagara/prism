@@ -44,9 +44,9 @@ impl Catalog {
     /// everything it reads, so the caller chooses which they want.
     pub async fn register<T: Record>(&self) -> Result<()> {
         let url = ListingTableUrl::parse(format!("{OBJECT_STORE_URL}/{}/", T::TABLE))?;
-        let sort_order = T::all_primary_key()
+        let sort_order = T::write_order()
             .iter()
-            .map(|name| col(*name).sort(true, false))
+            .map(|(name, ascending)| col(*name).sort(*ascending, false))
             .collect();
 
         let options = ListingOptions::new(Arc::new(ParquetFormat::default()))
