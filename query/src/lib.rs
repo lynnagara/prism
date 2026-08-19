@@ -1,3 +1,4 @@
+pub mod api;
 mod table;
 
 use std::sync::Arc;

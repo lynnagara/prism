@@ -5,7 +5,10 @@ edition = "2024"
 
 [dependencies]
 async-trait = "0.1"
+axum = { workspace = true }
 chrono = { workspace = true }
 datafusion = { workspace = true }
 schema = { workspace = true }
+serde = { version = "1", features = ["derive"] }
 store = { workspace = true }
+tokio = { workspace = true, features = ["net", "rt", "signal"] }

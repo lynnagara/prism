@@ -2659,6 +2659,7 @@ dependencies = [
  "datafusion",
  "ingest",
  "otlp",
+ "query",
  "schema",
  "tokio",
 ]
@@ -2725,10 +2726,13 @@ name = "query"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "chrono",
  "datafusion",
  "schema",
+ "serde",
  "store",
+ "tokio",
 ]
 
 [[package]]
