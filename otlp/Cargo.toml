@@ -4,7 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+axum = { workspace = true }
 chrono = { workspace = true }
+ingest = { workspace = true }
 opentelemetry-proto = { version = "0.32", features = ["gen-tonic-messages", "trace"] }
 prost = "0.14"
 schema = { workspace = true }
+tokio = { workspace = true, features = ["net", "rt", "signal"] }
+
+[dev-dependencies]
+datafusion = { workspace = true }
+futures = "0.3.34"
+tokio = { workspace = true, features = ["macros", "rt"] }
+tower = "0.5"

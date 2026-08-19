@@ -3,6 +3,7 @@ resolver = "3"
 members = ["compact", "ingest", "integration", "otlp", "prism", "query", "schema", "store"]
 
 [workspace.dependencies]
+axum = "0.8"
 chrono = "0.4.45"
 clap = { version = "4", features = ["derive"] }
 datafusion = "54.1.0"
