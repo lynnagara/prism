@@ -20,6 +20,15 @@ use store::{OBJECT_STORE_URL, ObjectWriter};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+/// What a merge aims for. A file at this size is left alone: merging it again
+/// would rewrite it for a fraction more.
+const TARGET_FILE_BYTES: u64 = 128 * 1024 * 1024;
+
+/// How far apart in size a batch's files may be. Bounds how much of a larger
+/// file gets rewritten to absorb a smaller one — the byte budget alone would
+/// not, since crumbs fit beside a nearly target-sized file.
+const SIZE_SPREAD: u64 = 8;
+
 /// Files per merge. A merge names every source in one filename, and a store
 /// backed by files bounds that at 255 bytes rather than s3's looser 1024 per
 /// key. At unhyphenated uuids the budget is `40 + 33n`, which leaves room for 6.
@@ -111,11 +120,40 @@ impl Compactor {
     }
 }
 
-/// The next batch worth merging, or `None` while it is better to wait.
+/// The next batch worth merging, smallest files first.
+///
+/// Restarts the batch rather than stopping when a file is too large for it, or
+/// one stray crumb anchors the spread for the whole listing and nothing ever
+/// merges. Closed, there is no later batch to leave the crumbs for.
 fn next_batch(sources: &[ObjectMeta], closed: bool) -> Option<Vec<ObjectMeta>> {
-    let batch: Vec<ObjectMeta> = sources.iter().take(SOURCES_PER_MERGE).cloned().collect();
+    let mut eligible: Vec<&ObjectMeta> = sources
+        .iter()
+        .filter(|source| source.size < TARGET_FILE_BYTES)
+        .collect();
+    eligible.sort_by_key(|source| source.size);
 
-    let full = batch.len() == SOURCES_PER_MERGE || closed;
+    let mut batch: Vec<ObjectMeta> = Vec::new();
+    let mut overflowed = false;
+
+    for source in eligible {
+        if batch.len() == SOURCES_PER_MERGE {
+            break;
+        }
+
+        let smallest = batch.first().map_or(source.size, |first| first.size);
+        if !closed && source.size > smallest * SIZE_SPREAD {
+            batch.clear();
+        }
+
+        let total: u64 = batch.iter().map(|source| source.size).sum();
+        if total + source.size > TARGET_FILE_BYTES {
+            overflowed = true;
+            break;
+        }
+        batch.push(source.clone());
+    }
+
+    let full = overflowed || batch.len() == SOURCES_PER_MERGE || closed;
     (full && batch.len() >= 2).then_some(batch)
 }
 

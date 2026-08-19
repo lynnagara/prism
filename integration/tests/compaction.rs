@@ -243,3 +243,35 @@ async fn a_closed_partition_merges_a_partial_batch() {
 
     assert_eq!(listing(&store).await.len(), 1);
 }
+
+/// Five crumbs and one much larger file are a full batch by count, but merging
+/// them would rewrite the large one to absorb a fraction of its size. Open,
+/// that is work better left for when the crumbs have company.
+#[tokio::test]
+async fn a_large_file_is_not_rewritten_to_absorb_crumbs() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+
+    let mut buffer: Buffer<Span> = Buffer::new(Writer::new(store.clone()));
+    for i in 0..20_000 {
+        buffer.push(span(&format!("big{i:05}"), at(9)));
+    }
+    buffer.flush().await.unwrap();
+
+    for i in 0..5 {
+        buffer.push(span(&format!("crumb{i}"), at(9)));
+        buffer.flush().await.unwrap();
+    }
+
+    // A one-row file still costs a parquet footer, so the large one has to be
+    // genuinely large for the spread to separate them.
+    let sizes = listing(&store).await;
+    assert_eq!(sizes.len(), 6);
+
+    let written_paths = Compactor::new(store.clone())
+        .compact::<Span>(&Path::from(Span::directory(at(9))), false)
+        .await
+        .unwrap();
+
+    assert!(written_paths.is_empty(), "the large file stays as it is");
+    assert_eq!(listing(&store).await.len(), 6);
+}
