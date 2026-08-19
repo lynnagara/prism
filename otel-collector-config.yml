@@ -1,0 +1,11 @@
+# Added to the demo collector's own config, which is how it takes a backend.
+# Its exporters are repeated because the merge replaces lists.
+
+exporters:
+  otlp_http:
+    endpoint: http://host.docker.internal:4318
+
+service:
+  pipelines:
+    traces:
+      exporters: [debug, span_metrics, otlp_http]
