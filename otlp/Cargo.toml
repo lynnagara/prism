@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 axum = { workspace = true }
 chrono = { workspace = true }
+flate2 = "1"
 ingest = { workspace = true }
 opentelemetry-proto = { version = "0.32", features = ["gen-tonic-messages", "trace"] }
 prost = "0.14"

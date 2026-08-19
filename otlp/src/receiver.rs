@@ -1,16 +1,19 @@
 //! Where OpenTelemetry sends its spans: one route, speaking the protocol a
 //! collector or an SDK exporter already speaks.
 
+use std::borrow::Cow;
+use std::io::{self, Read};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use chrono::Utc;
+use flate2::read::GzDecoder;
 use ingest::buffer::Buffer;
 use schema::spans::Span;
 use tokio::net::TcpListener;
@@ -51,10 +54,23 @@ pub async fn serve(
     Ok(())
 }
 
-async fn traces(State(buffer): State<Arc<Buffer<Span>>>, body: Bytes) -> Response {
-    let spans = match crate::spans::from_bytes(&body, Utc::now()) {
+async fn traces(
+    State(buffer): State<Arc<Buffer<Span>>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let decoded = decompressed(&headers, &body)
+        .map_err(|error| error.to_string())
+        .and_then(|body| {
+            crate::spans::from_bytes(&body, Utc::now()).map_err(|error| error.to_string())
+        });
+
+    let spans = match decoded {
         Ok(spans) => spans,
-        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+        Err(error) => {
+            eprintln!("refused a request: {error}");
+            return (StatusCode::BAD_REQUEST, error).into_response();
+        }
     };
 
     match buffer.push(spans) {
@@ -65,6 +81,22 @@ async fn traces(State(buffer): State<Arc<Buffer<Span>>>, body: Bytes) -> Respons
     }
 }
 
+/// Senders compress by default and say so in a header. Anything else arrives
+/// as it was sent.
+fn decompressed<'a>(headers: &HeaderMap, body: &'a Bytes) -> io::Result<Cow<'a, [u8]>> {
+    if headers
+        .get(header::CONTENT_ENCODING)
+        .is_none_or(|value| value != "gzip")
+    {
+        return Ok(Cow::Borrowed(body));
+    }
+
+    let mut decompressed = Vec::new();
+    GzDecoder::new(body.as_ref()).read_to_end(&mut decompressed)?;
+
+    Ok(Cow::Owned(decompressed))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,12 +104,15 @@ mod tests {
     use axum::http::Request;
     use datafusion::object_store::memory::InMemory;
     use datafusion::object_store::{ObjectStore, path::Path};
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
     use futures::StreamExt;
     use ingest::writer::Writer;
     use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
     use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span as OtlpSpan};
     use prost::Message;
     use schema::record::Record;
+    use std::io::Write;
     use tower::ServiceExt;
 
     fn exported() -> Vec<u8> {
@@ -122,6 +157,26 @@ mod tests {
 
         let written = store.list(Some(&Path::from(Span::TABLE))).count().await;
         assert_eq!(written, 1);
+    }
+
+    /// Senders compress by default, so a receiver that only reads plain bodies
+    /// refuses everything a collector sends it.
+    #[tokio::test]
+    async fn a_compressed_request_is_read() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let buffer = Arc::new(Buffer::new(Writer::new(store)));
+
+        let mut gzip = GzEncoder::new(Vec::new(), Compression::default());
+        gzip.write_all(&exported()).unwrap();
+
+        let request = Request::post(TRACES)
+            .header(header::CONTENT_TYPE, PROTOBUF)
+            .header(header::CONTENT_ENCODING, "gzip")
+            .body(Body::from(gzip.finish().unwrap()))
+            .unwrap();
+
+        let response = routes(buffer).oneshot(request).await;
+        assert_eq!(response.unwrap().status(), StatusCode::OK);
     }
 
     /// A body prism cannot read is the sender's mistake, and no amount of

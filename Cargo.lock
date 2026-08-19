@@ -2484,6 +2484,7 @@ dependencies = [
  "axum",
  "chrono",
  "datafusion",
+ "flate2",
  "futures",
  "ingest",
  "opentelemetry-proto",
