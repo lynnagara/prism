@@ -169,3 +169,47 @@ async fn more_files_than_one_merge_can_name() {
         ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"]
     );
 }
+
+/// Row groups are the smallest unit a query can skip, so a merged file holding
+/// more rows than one group has to split into several — otherwise its min/max
+/// spans everything and merging bought only fewer files to open.
+#[tokio::test]
+async fn a_merged_file_splits_into_row_groups() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+
+    // Three flushes of nine thousand, so the merge crosses the row group size
+    // that no single ingest file reaches.
+    for file in 0..3 {
+        let mut buffer: Buffer<Span> = Buffer::new(Writer::new(store.clone()));
+        for i in 0..9_000 {
+            buffer.push(span(&format!("s{file}-{i:05}"), at(9)));
+        }
+        buffer.flush().await.unwrap();
+    }
+
+    Compactor::new(store.clone())
+        .compact::<Span>(&Path::from(Span::directory(at(9))))
+        .await
+        .unwrap();
+
+    let merged = listing(&store).await;
+    assert_eq!(merged.len(), 1);
+
+    let bytes = store
+        .get(&merged[0].location)
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let groups =
+        datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .unwrap()
+            .metadata()
+            .num_row_groups();
+
+    assert!(
+        groups > 1,
+        "27000 rows should not be one row group, got {groups}"
+    );
+}

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::object_store::ObjectStore;
 use datafusion::object_store::path::Path;
-use datafusion::object_store::{ObjectStore, ObjectStoreExt};
-use datafusion::parquet::arrow::ArrowWriter;
+use store::ObjectWriter;
 use uuid::Uuid;
 
 /// One object's rows and name. The name is set here so a retry overwrites
@@ -35,12 +35,8 @@ impl Writer {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let path = Self::object_path(&batch.directory, batch.file_id);
 
-        let mut buffer = Vec::new();
-        let mut writer = ArrowWriter::try_new(&mut buffer, batch.rows.schema(), None)?;
+        let mut writer = ObjectWriter::new(self.store.clone(), path, batch.rows.schema())?;
         writer.write(&batch.rows)?;
-        writer.close()?;
-
-        self.store.put(&path, buffer.into()).await?;
-        Ok(())
+        writer.finish().await
     }
 }

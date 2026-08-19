@@ -3,8 +3,10 @@
 pub mod merged;
 
 mod live;
+mod writer;
 
 pub use live::LiveStore;
+pub use writer::ObjectWriter;
 
 /// Backend-agnostic url the object store is mounted under, so paths are
 /// identical whether they resolve to memory or a bucket. Datafusion keys

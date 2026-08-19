@@ -12,12 +12,11 @@ use datafusion::execution::object_store::ObjectStoreUrl;
 use datafusion::logical_expr::SortExpr;
 use datafusion::object_store::path::Path;
 use datafusion::object_store::{ObjectMeta, ObjectStore, ObjectStoreExt};
-use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::prelude::{ParquetReadOptions, SessionConfig, SessionContext, col};
 use futures::{StreamExt, TryStreamExt};
 use schema::record::Record;
-use store::OBJECT_STORE_URL;
 use store::merged;
+use store::{OBJECT_STORE_URL, ObjectWriter};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -65,16 +64,11 @@ impl Compactor {
             .execute_stream()
             .await?;
 
-        // Encoded a batch at a time, so what is held is one output file's bytes
-        // rather than every row the partition holds.
-        let mut buffer = Vec::new();
-        let mut writer = ArrowWriter::try_new(&mut buffer, T::schema(), None)?;
+        let mut writer = ObjectWriter::new(self.store.clone(), path.clone(), T::schema())?;
         while let Some(batch) = stream.next().await {
             writer.write(&batch?)?;
         }
-        writer.close()?;
-
-        self.store.put(&path, buffer.into()).await?;
+        writer.finish().await?;
 
         for source in sources {
             self.store.delete(&source.location).await?;
@@ -141,17 +135,14 @@ mod tests {
         // would put several in one group and force a re-sort.
         for id in 0..64 {
             let batch = empty_span_batch();
-            let mut buffer = Vec::new();
-            let mut writer = ArrowWriter::try_new(&mut buffer, batch.schema(), None).unwrap();
+            let mut writer = ObjectWriter::new(
+                store.clone(),
+                Path::from(format!("spans/p/{id:02}.parquet")),
+                batch.schema(),
+            )
+            .unwrap();
             writer.write(&batch).unwrap();
-            writer.close().unwrap();
-            store
-                .put(
-                    &Path::from(format!("spans/p/{id:02}.parquet")),
-                    buffer.into(),
-                )
-                .await
-                .unwrap();
+            writer.finish().await.unwrap();
         }
 
         let sources: Vec<ObjectMeta> = store.list(None).try_collect().await.unwrap();
