@@ -45,6 +45,9 @@ pub struct Span {
     pub span_id: SpanId,
     pub trace_id: TraceId,
     pub parent_span_id: Option<SpanId>,
+    /// Which service the span came from. Promoted out of `tags` because every
+    /// query filters on it, and absent when the sender never said.
+    pub service: Option<String>,
     pub name: String,
     pub started_at: Timestamp,
     pub ended_at: Option<Timestamp>,
@@ -68,6 +71,7 @@ impl Record for Span {
             Column::new("span_id", |s| &s.span_id),
             Column::new("trace_id", |s| &s.trace_id),
             Column::new("parent_span_id", |s| &s.parent_span_id),
+            Column::new("service", |s| &s.service),
             Column::new("name", |s| &s.name),
             Column::new("started_at", |s| &s.started_at),
             Column::new("ended_at", |s| &s.ended_at),
@@ -120,6 +124,7 @@ mod tests {
                 span_id: SpanId::from([0xaa; 8]),
                 trace_id: TraceId::from([0xcc; 16]),
                 parent_span_id: None,
+                service: Some("checkout".to_string()),
                 name: "GET /checkout".to_string(),
                 started_at: at(9),
                 ended_at: Some(at(10)),
@@ -136,6 +141,7 @@ mod tests {
                 span_id: SpanId::from([0xbb; 8]),
                 trace_id: TraceId::from([0xcc; 16]),
                 parent_span_id: Some(SpanId::from([0xaa; 8])),
+                service: None,
                 name: "charge card".to_string(),
                 started_at: at(9),
                 ended_at: None,
@@ -170,6 +176,7 @@ mod tests {
         assert_eq!(column(&batch, "name"), ["GET /checkout", "charge card"]);
         assert_eq!(column(&batch, "project_id"), ["91733", "91733"]);
         assert_eq!(column(&batch, "status"), ["ok", "unset"]);
+        assert_eq!(column(&batch, "service"), ["checkout", "null"]);
     }
 
     #[test]

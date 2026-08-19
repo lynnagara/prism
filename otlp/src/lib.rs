@@ -9,7 +9,10 @@ use schema::record::Common;
 use schema::spans::{Span, Status};
 use schema::types::{Id, Tags, Timestamp};
 
-/// Hardcoded for demo.
+/// Promoted resource attribute
+const SERVICE_NAME: &str = "service.name";
+
+/// Hardcoded for demo
 const ORGANIZATION_ID: &str = "1";
 const PROJECT_ID: &str = "1";
 
@@ -28,13 +31,22 @@ pub fn spans(request: ExportTraceServiceRequest, received_at: DateTime<Utc>) -> 
     request
         .resource_spans
         .into_iter()
-        .flat_map(|resource| resource.scope_spans)
-        .flat_map(|scope| scope.spans)
-        .filter_map(|span| to_span(span, received_at))
+        .flat_map(|resource| {
+            // What the resource says — the service a span came from, above all
+            // — is only sent once, so every span it covers takes a copy.
+            let attributes = resource.resource.map(|r| r.attributes).unwrap_or_default();
+
+            resource
+                .scope_spans
+                .into_iter()
+                .flat_map(|scope| scope.spans)
+                .filter_map(|span| to_span(span, &attributes, received_at))
+                .collect::<Vec<Span>>()
+        })
         .collect()
 }
 
-fn to_span(span: OtlpSpan, received_at: DateTime<Utc>) -> Option<Span> {
+fn to_span(span: OtlpSpan, resource: &[KeyValue], received_at: DateTime<Utc>) -> Option<Span> {
     let (code, message) = match span.status {
         Some(status) => (status.code(), status.message),
         None => (StatusCode::Unset, String::new()),
@@ -64,8 +76,25 @@ fn to_span(span: OtlpSpan, received_at: DateTime<Utc>) -> Option<Span> {
             StatusCode::Unset => Status::Unset,
         },
         status_message: (!message.is_empty()).then_some(message),
-        tags: tags(span.attributes),
+        service: service(resource),
+        // Last wins, so a span saying something its resource also says keeps
+        // its own answer.
+        tags: tags(
+            resource
+                .iter()
+                .filter(|attribute| attribute.key != SERVICE_NAME)
+                .cloned()
+                .chain(span.attributes),
+        ),
     })
+}
+
+fn service(resource: &[KeyValue]) -> Option<String> {
+    resource
+        .iter()
+        .find(|attribute| attribute.key == SERVICE_NAME)
+        .and_then(|attribute| attribute.value.clone())
+        .and_then(tag_value)
 }
 
 /// Ids are fixed width, and a sender that gets it wrong has sent something
@@ -80,7 +109,7 @@ fn nanos(unix_nano: u64) -> DateTime<Utc> {
 }
 
 /// Keys pass through as they are; only values need converting.
-fn tags(attributes: Vec<KeyValue>) -> Tags {
+fn tags(attributes: impl IntoIterator<Item = KeyValue>) -> Tags {
     attributes
         .into_iter()
         .map(|attribute| (attribute.key, attribute.value.and_then(tag_value)))
@@ -107,6 +136,7 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use opentelemetry_proto::tonic::common::v1::InstrumentationScope;
+    use opentelemetry_proto::tonic::resource::v1::Resource;
     use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Status as OtlpStatus};
 
     fn at(hour: u32) -> DateTime<Utc> {
@@ -124,6 +154,27 @@ mod tests {
                 }],
                 schema_url: String::new(),
             }],
+        }
+    }
+
+    /// The same request, from a sender that said something about itself.
+    fn request_from(attributes: Vec<KeyValue>, spans: Vec<OtlpSpan>) -> ExportTraceServiceRequest {
+        let mut request = request(spans);
+        request.resource_spans[0].resource = Some(Resource {
+            attributes,
+            ..Default::default()
+        });
+
+        request
+    }
+
+    fn attribute(key: &str, value: &str) -> KeyValue {
+        KeyValue {
+            key: key.to_string(),
+            value: Some(AnyValue {
+                value: Some(any_value::Value::StringValue(value.to_string())),
+            }),
+            ..Default::default()
         }
     }
 
@@ -201,6 +252,49 @@ mod tests {
         ]);
 
         assert_eq!(spans[0].tags, tags);
+    }
+
+    /// A resource is sent once for the spans grouped under it, so what it says
+    /// has to reach each of them — `service.name` to a column, the rest to the
+    /// map.
+    #[test]
+    fn every_span_gets_its_resources_attributes() {
+        let request = request_from(
+            vec![
+                attribute(SERVICE_NAME, "checkout"),
+                attribute("host.name", "web-1"),
+            ],
+            vec![finished(), finished()],
+        );
+
+        let tags = Tags::from_iter([
+            ("env", Some("prod".to_string())),
+            ("host.name", Some("web-1".to_string())),
+            ("retries", Some("2".to_string())),
+            ("sampled", None),
+        ]);
+
+        for span in spans(request, at(11)) {
+            assert_eq!(span.service.as_deref(), Some("checkout"));
+            assert_eq!(span.tags, tags);
+        }
+    }
+
+    /// Both can set the same tag, and the span's answer is the one kept.
+    #[test]
+    fn a_span_attribute_wins_over_the_resources() {
+        let request = request_from(vec![attribute("env", "staging")], vec![finished()]);
+        let spans = spans(request, at(11));
+
+        assert_eq!(spans[0].service, None, "no service was sent");
+        assert_eq!(
+            spans[0].tags,
+            Tags::from_iter([
+                ("env", Some("prod".to_string())),
+                ("retries", Some("2".to_string())),
+                ("sampled", None),
+            ])
+        );
     }
 
     /// Resource and scope say where a span came from, not what it is, so spans

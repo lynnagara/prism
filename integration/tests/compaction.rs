@@ -53,6 +53,7 @@ fn span(span_id_label: &str, received_at: DateTime<Utc>) -> Span {
         span_id: span_id(span_id_label),
         trace_id: trace_id("aaa"),
         parent_span_id: None,
+        service: Some("checkout".to_string()),
         name: "GET /checkout".to_string(),
         started_at: Timestamp::from(received_at),
         ended_at: None,

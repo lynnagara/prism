@@ -222,6 +222,7 @@ mod tests {
             span_id: SpanId::from([0xaa; 8]),
             trace_id: TraceId::from([0xcc; 16]),
             parent_span_id: None,
+            service: None,
             name: "GET /checkout".to_string(),
             started_at: Timestamp::from(received_at),
             ended_at: None,
