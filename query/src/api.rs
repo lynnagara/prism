@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::response::{Html, IntoResponse, Response};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::json::ArrayWriter;
@@ -23,7 +23,16 @@ pub struct Request {
 }
 
 pub fn routes(catalog: Arc<Catalog>) -> Router {
-    Router::new().route("/sql", post(sql)).with_state(catalog)
+    Router::new()
+        .route("/", get(index))
+        .route("/sql", post(sql))
+        .with_state(catalog)
+}
+
+/// The UI ships in the binary and is served from here, so it shares an origin
+/// with the endpoint it queries and needs no cross-origin setup.
+async fn index() -> Html<&'static str> {
+    Html(include_str!("../../web/index.html"))
 }
 
 pub async fn serve(

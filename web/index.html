@@ -1,0 +1,73 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>prism</title>
+
+<h1>Traces</h1>
+
+<pre id="sql"></pre>
+<button id="run">Run</button>
+<p id="note"></p>
+<table id="out" border="1" cellpadding="4"></table>
+
+<script>
+const SQL = `select trace_id,
+       min(name) filter (where parent_span_id is null) as trace_root,
+       min(service) filter (where parent_span_id is null) as entry_service,
+       min(started_at) as started_at,
+       count(*) as spans
+  from spans_merged
+ where received_at >= now() - interval '7 days'
+ group by trace_id
+ order by started_at desc
+ limit 50`;
+
+document.getElementById("sql").textContent = SQL;
+
+// Served from the same origin as the api, so no cross-origin setup is needed.
+async function run() {
+  const note = document.getElementById("note");
+  const out = document.getElementById("out");
+  note.textContent = "running…";
+  out.innerHTML = "";
+
+  const started = performance.now();
+  const response = await fetch("/sql", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sql: SQL }),
+  });
+
+  // A query that will not run comes back as plain text, not json.
+  if (!response.ok) {
+    note.textContent = "error: " + (await response.text());
+    return;
+  }
+
+  const rows = await response.json();
+  note.textContent = `${rows.length} rows in ${Math.round(performance.now() - started)} ms`;
+  if (!rows.length) return;
+
+  // Columns are whatever the query selected, in the order arrow wrote them.
+  const columns = [...new Set(rows.flatMap(Object.keys))];
+  const head = document.createElement("tr");
+  for (const name of columns) {
+    const th = document.createElement("th");
+    th.textContent = name;
+    head.append(th);
+  }
+  out.append(head);
+
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    for (const name of columns) {
+      const td = document.createElement("td");
+      td.textContent = row[name] ?? "";
+      tr.append(td);
+    }
+    out.append(tr);
+  }
+}
+
+document.getElementById("run").onclick = run;
+run();
+</script>
