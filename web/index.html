@@ -1,73 +1,434 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>prism</title>
+<title>Trace Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --canvas:#faf9fb; --panel:#fff; --sunken:#f5f3f8;
+    --hairline:#e7e3ee; --hairline-strong:#cfcfdb;
+    --ink:#1f1633; --muted:#6b6280; --faint:#9a93ab;
+    --violet:#6a5fc1; --violet-wash:#f2effc;
+    --red:#d1373d;
+    --mono:"Monaco","Menlo","Ubuntu Mono",monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font: 13px/1.5 "Rubik", -apple-system, system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+    margin: 0; padding: 20px 24px; color: var(--ink); background: var(--canvas);
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+  h1 { font-size: 17px; margin: 0 0 3px; font-weight: 600; letter-spacing: -.015em; }
+  a { color: var(--violet); cursor: pointer; }
+  a:hover { text-decoration: underline; }
+  nav { margin: 0 0 14px; color: var(--faint); font-size: 12.5px; }
 
-<h1>Traces</h1>
+  #controls { margin: 0 0 14px; display: flex; gap: 8px; align-items: center; }
+  #controls input {
+    font: inherit; padding: 6px 10px; width: 330px; background: var(--panel);
+    border: 1px solid var(--hairline-strong); border-radius: 6px; color: var(--ink);
+  }
+  #controls input::placeholder { color: var(--faint); }
+  #controls input:focus { outline: none; border-color: var(--violet);
+                          box-shadow: 0 0 0 3px var(--violet-wash); }
+  .seg { display: flex; border: 1px solid var(--hairline-strong); border-radius: 6px;
+         overflow: hidden; background: var(--panel); }
+  .seg button { padding: 6px 11px; font-size: 12px; color: var(--muted);
+                border-right: 1px solid var(--hairline); }
+  .seg button:last-child { border-right: none; }
+  .seg button:hover { background: var(--sunken); }
+  .seg button.on { background: var(--violet); color: #fff; }
 
-<pre id="sql"></pre>
-<button id="run">Run</button>
-<p id="note"></p>
-<table id="out" border="1" cellpadding="4"></table>
+  table { border-collapse: collapse; width: 100%; background: var(--panel);
+          border: 1px solid var(--hairline); border-radius: 6px; }
+  th {
+    text-align: left; font-size: 10px; font-weight: 500; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--faint); background: var(--canvas);
+    border-bottom: 1px solid var(--hairline); position: sticky; top: 0; z-index: 1;
+  }
+  th, td { padding: 0 14px; height: 32px; white-space: nowrap; }
+  th[data-sort] { cursor: pointer; user-select: none; }
+  th[data-sort]:hover { color: var(--violet); }
+  tbody tr { border-bottom: 1px solid var(--hairline); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr[data-go] { cursor: pointer; }
+  tbody tr[data-go]:hover { background: var(--violet-wash); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 12px; }
+  .muted { color: var(--faint); }
+  .err { color: var(--red); }
+
+  /* waterfall */
+  .track { width: 100%; background: var(--sunken); border-radius: 2px; }
+  .bar { height: 9px; background: var(--violet); min-width: 1px; border-radius: 2px; }
+  .svc { font-family: var(--mono); font-size: 10px; padding: 2px 6px; border-radius: 3px;
+         display: inline-block; max-width: 128px; overflow: hidden;
+         text-overflow: ellipsis; vertical-align: middle; }
+  /* Fills the row exactly, so a guide line reaches the row above and below
+     without overshooting — the rows are 32px and the text alone is not. */
+  .name { position: relative; display: flex; align-items: center; height: 32px; }
+  .conn { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--hairline-strong); }
+  .conn.half { bottom: 50%; }
+  .conn-h { position: absolute; top: 50%; height: 1px; width: 9px; background: var(--hairline-strong); }
+
+  /* Pinned to the bottom and open by default: every view says which query
+     produced it, without taking width from the results. */
+  #query { position: fixed; left: 0; right: 0; bottom: 0;
+           background: #f6f6f7; border-top: 1px solid #d6d4da;
+           box-shadow: 0 -2px 12px rgba(31, 22, 51, .07);
+           padding: 9px 24px 13px; max-height: 45vh; overflow: auto; }
+  #query summary { cursor: pointer; user-select: none; }
+  #query b { font-weight: 600; color: #4a4550; }
+  #query pre { margin: 9px 0 0; font: 12px/1.65 var(--mono);
+               white-space: pre-wrap; color: #352d4d; }
+  #note { color: var(--faint); }
+  .kw { color: var(--violet); } .str { color: #2d8a6b; }
+  /* A starting value only — the real one is measured, since the pane's
+     height changes with the query and with opening and closing it. */
+  body { padding-bottom: 56px; }
+</style>
+
+<h1>Trace Explorer</h1>
+<nav><span id="crumbs"></span></nav>
+<div id="controls"></div>
+<div id="out"></div>
+<details id="query" open>
+  <summary><b>SQL for this view</b> &nbsp; <span id="note"></span></summary>
+  <pre id="sql"></pre>
+</details>
 
 <script>
-const SQL = `select trace_id,
-       min(name) filter (where parent_span_id is null) as trace_root,
-       min(service) filter (where parent_span_id is null) as entry_service,
-       min(started_at) as started_at,
-       count(*) as spans
-  from spans_merged
- where received_at >= now() - interval '7 days'
- group by trace_id
- order by started_at desc
- limit 50`;
+const RANGES = [
+  { id: "1h", sql: "1 hour" }, { id: "24h", sql: "24 hours" },
+  { id: "7d", sql: "7 days" }, { id: "30d", sql: "30 days" },
+];
+const quote = value => "'" + String(value).replace(/'/g, "''") + "'";
 
-document.getElementById("sql").textContent = SQL;
-
-// Served from the same origin as the api, so no cross-origin setup is needed.
-async function run() {
-  const note = document.getElementById("note");
-  const out = document.getElementById("out");
-  note.textContent = "running…";
-  out.innerHTML = "";
-
-  const started = performance.now();
-  const response = await fetch("/sql", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sql: SQL }),
-  });
-
-  // A query that will not run comes back as plain text, not json.
-  if (!response.ok) {
-    note.textContent = "error: " + (await response.text());
-    return;
-  }
-
-  const rows = await response.json();
-  note.textContent = `${rows.length} rows in ${Math.round(performance.now() - started)} ms`;
-  if (!rows.length) return;
-
-  // Columns are whatever the query selected, in the order arrow wrote them.
-  const columns = [...new Set(rows.flatMap(Object.keys))];
-  const head = document.createElement("tr");
-  for (const name of columns) {
-    const th = document.createElement("th");
-    th.textContent = name;
-    head.append(th);
-  }
-  out.append(head);
-
-  for (const row of rows) {
-    const tr = document.createElement("tr");
-    for (const name of columns) {
-      const td = document.createElement("td");
-      td.textContent = row[name] ?? "";
-      tr.append(td);
-    }
-    out.append(tr);
-  }
+/** One box: bare words match the operation name, and a `service:` token pins
+    the root service. Both become sql, so the pane shows what was asked. */
+function parseQuery(text) {
+  const token = text.match(/service:(\S+)/i);
+  return { service: token ? token[1] : null, free: text.replace(/service:\S+/ig, "").trim() };
 }
 
-document.getElementById("run").onclick = run;
-run();
+function filters(text) {
+  const { service, free } = parseQuery(text);
+  return [
+    service ? `root_service = ${quote(service)}` : null,
+    free ? `root_name ilike ${quote("%" + free + "%")}` : null,
+  ].filter(Boolean);
+}
+const where = list => list.length ? `\n where ${list.join("\n   and ")}` : "";
+// A group whose root span never arrived has no service or name to match on.
+const matches = (column, value) =>
+  value === null ? `${column} is null` : `${column} = ${quote(value)}`;
+
+/** Two levels of rollup: spans into traces, then traces into operations. What
+    the store is asked at the top, because a list of every trace is mostly the
+    same trace over and over. */
+const inner = (window, extra = "") => `(select trace_id,
+               min(service) filter (where parent_span_id is null) as root_service,
+               min(name)    filter (where parent_span_id is null) as root_name,
+               min(started_at) as started_at,
+               count(*) as spans,
+               date_part('epoch', max(ended_at))
+                 - date_part('epoch', min(started_at)) as seconds
+          from spans_merged
+         where received_at >= now() - interval ${quote(window)}
+         group by trace_id)${extra}`;
+
+const OPERATIONS = (window, text) => `select root_service, root_name, count(*) as traces,
+       avg(seconds) * 1000 as avg_ms,
+       approx_percentile_cont(seconds, 0.95) * 1000 as p95_ms,
+       max(started_at) as last_seen
+  from ${inner(window)}${where(filters(text))}
+ group by root_service, root_name`;
+
+/** The traces behind one of those rows, slowest first — you came here from a
+    p95, so the slow ones are what you were looking for. */
+const TRACE_SORTS = { slowest: "seconds desc", latest: "started_at desc" };
+
+// Ordered in sql rather than in the page: only fifty rows come back, so
+// re-sorting here would be sorting the fifty slowest and calling them latest.
+const tracesFor = (service, root, sort, window) => `select trace_id, started_at, spans, seconds
+  from ${inner(window)}${where([matches("root_service", service), matches("root_name", root)])}
+ order by ${TRACE_SORTS[sort]}
+ limit 50`;
+
+// Ids are FixedSizeBinary, so a hex literal has to be decoded to match.
+const spansFor = id => `select span_id, parent_span_id, service, name, status,
+       status_message, started_at, ended_at
+  from spans_merged
+ where trace_id = decode(${quote(id)},'hex')
+ order by started_at`;
+
+/** Microseconds since the epoch. Date.parse stops at milliseconds, and half
+    these traces are shorter than that — rounding would flatten them. */
+function micros(stamp) {
+  const [, head, fraction = ""] = stamp.match(/^(.*?)(?:\.(\d+))?Z$/);
+  return Date.parse(head + "Z") * 1000 + Number(fraction.padEnd(6, "0").slice(0, 6));
+}
+const ms = us => us >= 1e6 ? (us / 1e6).toFixed(2) + "s"
+              : us >= 1e3 ? (us / 1e3).toFixed(1) + "ms"
+              : us + "µs";
+const dash = v => v ?? '<span class="muted">—</span>';
+
+/** Sentry orders its categorical palette so green arrives last, because green
+    means healthy everywhere else. It is left out entirely here, and colours are
+    handed out per trace in the order services first appear — so a two-service
+    trace uses only the first two. */
+const PALETTE = ["#7553ff", "#8c4fce", "#4e63d8", "#a044b8", "#c13b8c", "#e1567c", "#e4712f", "#c99a00"];
+function palette(rows) {
+  const order = [];
+  for (const r of rows) if (r.service && !order.includes(r.service)) order.push(r.service);
+  const by = new Map(order.map((name, i) => [name, PALETTE[i % PALETTE.length]]));
+  return name => (name ? by.get(name) ?? PALETTE[0] : "#9a93ab");
+}
+
+const STEP = 15;
+/** One vertical line per ancestor that still has rows below this one, plus the
+    elbow into this row — indentation alone stops reading past two levels. */
+function connectors(depth, guides, isLast) {
+  let html = "";
+  for (let i = 0; i < depth; i++) {
+    const x = i * STEP + 6;
+    if (i === depth - 1)
+      html += `<span class="conn ${isLast ? "half" : ""}" style="left:${x}px"></span>` +
+              `<span class="conn-h" style="left:${x}px"></span>`;
+    else if (guides[i]) html += `<span class="conn" style="left:${x}px"></span>`;
+  }
+  return html;
+}
+const ago = stamp => {
+  if (!stamp) return "—";
+  const seconds = (Date.now() - Date.parse(stamp)) / 1000;
+  if (seconds < 90) return Math.round(seconds) + "s ago";
+  if (seconds < 5400) return Math.round(seconds / 60) + "m ago";
+  if (seconds < 172800) return Math.round(seconds / 3600) + "h ago";
+  return Math.round(seconds / 86400) + "d ago";
+};
+
+const esc = t => String(t).replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+
+/** Shown verbatim, so the sql on screen is the sql that ran — not a summary
+    of it, and not something rewritten for display. */
+function showQuery(query) {
+  document.getElementById("sql").innerHTML = esc(query)
+    .replace(/'([^']*)'/g, `<span class="str">'$1'</span>`)
+    .replace(/\b(select|from|where|group by|having|order by|limit|and|or|as|filter|interval|is|null|not|desc|asc|min|max|avg|count|now|decode|date_part|approx_percentile_cont)\b/g,
+             `<span class="kw">$1</span>`);
+}
+
+async function sql(query) {
+  showQuery(query);
+  const response = await fetch("/sql", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sql: query }),
+  });
+  // A query that will not run comes back as plain text, not json.
+  if (!response.ok) throw new Error(await response.text());
+  // The store's own timing, so the number is not padded by http and parsing.
+  const { rows, elapsed_ms } = await response.json();
+  return { rows, took: elapsed_ms };
+}
+
+function show(crumbs, note, html) {
+  document.getElementById("crumbs").innerHTML = crumbs;
+  document.getElementById("note").textContent = note;
+  document.getElementById("out").innerHTML = html;
+  for (const crumb of document.querySelectorAll("[data-back]"))
+    crumb.onclick = () => views[crumb.dataset.back](...JSON.parse(crumb.dataset.args || "[]"));
+}
+
+function rows(table, go) {
+  document.getElementById("out").innerHTML = table;
+  for (const row of document.querySelectorAll("tbody tr[data-go]"))
+    row.onclick = () => go(JSON.parse(row.dataset.go));
+}
+
+const views = {};
+
+// Volume first. Ranking by p95 puts whatever is longest-lived at the top —
+// an open gRPC stream, or a trace whose root never arrived — which is true but
+// is not what anyone came to see. The columns sort, so latency is a click away.
+// What ran most recently: the question you have when you arrive with no
+// other context. Every column sorts, so volume and latency are one click away.
+let sortBy = "last_seen";
+let operations = null;
+let range = RANGES[2];
+let text = "";
+
+/** Names break every tie. A grouped query has no defined row order — two runs
+    return the same rows differently — and half of these share a trace count,
+    so without this they trade places whenever the table is redrawn. */
+/** Timestamps compare as numbers, never as text: arrow trims trailing zeros,
+    so `.946Z` and `.946802Z` both occur, and as strings the shorter one sorts
+    later because 'Z' outranks any digit. */
+const seen = row => row.last_seen ? micros(row.last_seen) : 0;
+
+function compare(a, b) {
+  const by = sortBy === "root_name"
+      ? String(a.root_name ?? "").localeCompare(String(b.root_name ?? ""))
+    : sortBy === "last_seen" ? seen(b) - seen(a)
+    : (b[sortBy] ?? 0) - (a[sortBy] ?? 0);
+  if (by) return by;
+  // Within a tie, most recent first — the same question the default asks.
+  const recent = seen(b) - seen(a);
+  // Names last, so two operations seen at the same instant still have an order.
+  return recent
+      || String(a.root_service ?? "").localeCompare(String(b.root_service ?? ""))
+      || String(a.root_name ?? "").localeCompare(String(b.root_name ?? ""));
+}
+
+views.operations = async () => {
+  controls(true);
+  await loadOperations();
+};
+
+async function loadOperations() {
+  const { rows, took } = await sql(OPERATIONS(range.sql, text));
+  operations = { rows, took };
+  drawOperations();
+}
+
+/** Redrawn only when the range changes, never on a keystroke — rebuilding the
+    input mid-type would take the caret with it. */
+let typing;
+function controls(searchable) {
+  document.getElementById("controls").innerHTML =
+    (searchable ? `<input id="q" placeholder="filter operations, or service:frontend"
+                          value="${esc(text)}">` : "") +
+    `<span class="seg">${RANGES.map(r =>
+      `<button data-range="${r.id}" class="${r === range ? "on" : ""}">${r.id}</button>`).join("")}</span>`;
+
+  for (const button of document.querySelectorAll("[data-range]"))
+    button.onclick = () => {
+      range = RANGES.find(r => r.id === button.dataset.range);
+      views[searchable ? "operations" : "traces"](...(current || []));
+    };
+
+  const box = document.getElementById("q");
+  if (box) box.oninput = () => {
+    text = box.value;
+    clearTimeout(typing);
+    // A query per keystroke would be a query per keystroke.
+    typing = setTimeout(loadOperations, 250);
+  };
+}
+
+// Sorting redraws what was fetched; it does not ask the store again.
+function drawOperations() {
+  const { rows: found, took } = operations;
+  const sorted = [...found].sort(compare);
+
+  show("Operations", `Returned ${found.length} rows in ${took} ms`, "");
+  const heading = (key, label, cls = "num") =>
+    `<th class="${cls}" data-sort="${key}">${label}${sortBy === key ? " ↓" : ""}</th>`;
+
+  rows(`<table><thead><tr>
+      <th>Root service</th>${heading("root_name", "Trace root", "")}${heading("traces", "Traces")}
+      ${heading("avg_ms", "Avg")}${heading("p95_ms", "p95")}${heading("last_seen", "Last seen")}
+    </tr></thead><tbody>` + sorted.map(r => `
+    <tr data-go='${JSON.stringify([r.root_service ?? null, r.root_name ?? null])}'>
+      <td>${dash(r.root_service)}</td>
+      <td>${dash(r.root_name)}</td>
+      <td class="num">${r.traces}</td>
+      <td class="num">${ms(r.avg_ms * 1000)}</td>
+      <td class="num">${ms(r.p95_ms * 1000)}</td>
+      <td class="num muted">${ago(r.last_seen)}</td>
+    </tr>`).join("") + "</tbody></table>",
+    ([service, root]) => views.traces(service, root));
+
+  for (const th of document.querySelectorAll("th[data-sort]"))
+    th.onclick = () => { sortBy = th.dataset.sort; drawOperations(); };
+}
+
+let traceSort = "slowest";
+// What the range buttons re-run when they are not on the operations view.
+let current = null;
+
+views.traces = async (service, root) => {
+  current = [service, root];
+  controls(false);
+  const { rows: found, took } = await sql(tracesFor(service, root, traceSort, range.sql));
+  const slowest = Math.max(1, ...found.map(r => r.seconds));
+  show(`<a data-back="operations">Operations</a> › ${root ?? "—"} · ${service ?? "no service"}`,
+    `Returned ${found.length} rows in ${took} ms`, "");
+  rows(`<table><thead><tr>
+      <th>Trace</th><th class="num">Spans</th>
+      <th class="num" data-sort="slowest">Duration${traceSort === "slowest" ? " ↓" : ""}</th>
+      <th style="width:25%"></th>
+      <th data-sort="latest">Started${traceSort === "latest" ? " ↓" : ""}</th>
+    </tr></thead><tbody>` + found.map(r => `
+    <tr data-go='${JSON.stringify([r.trace_id, service, root])}'>
+      <td class="muted">${r.trace_id.slice(0, 16)}…</td>
+      <td class="num">${r.spans}</td>
+      <td class="num">${ms(r.seconds * 1e6)}</td>
+      <td><div class="track"><div class="bar" style="width:${(r.seconds / slowest) * 100}%"></div></div></td>
+      <td class="muted">${r.started_at.replace("T", " ").slice(0, 23)}</td>
+    </tr>`).join("") + "</tbody></table>",
+    ([id, service, root]) => views.trace(id, service, root));
+
+  for (const th of document.querySelectorAll("th[data-sort]"))
+    th.onclick = () => { traceSort = th.dataset.sort; views.traces(service, root); };
+};
+
+views.trace = async (id, service, root) => {
+  document.getElementById("controls").innerHTML = "";
+  const { rows: found, took } = await sql(spansFor(id));
+  const start = Math.min(...found.map(r => micros(r.started_at)));
+  const span = Math.max(1, Math.max(...found.map(r => micros(r.ended_at))) - start);
+
+  // Depth-first over parent links, carrying which ancestors still have rows
+  // below this one so the guide lines know where to draw. A span whose parent
+  // is missing from the result sits at the root rather than disappearing.
+  const byId = new Map(found.map(r => [r.span_id, r]));
+  const kids = parent => found.filter(r => r.parent_span_id === parent);
+  const order = [];
+  const walk = (row, depth, guides, isLast) => {
+    order.push({ row, depth, guides, isLast });
+    const children = kids(row.span_id);
+    children.forEach((kid, i) => walk(kid, depth + 1, [...guides, !isLast], i === children.length - 1));
+  };
+  const roots = found.filter(r => !r.parent_span_id || !byId.has(r.parent_span_id));
+  roots.forEach((row, i) => walk(row, 0, [], i === roots.length - 1));
+
+  const tint = palette(found);
+
+  show(
+    `<a data-back="operations">Operations</a> › ` +
+    `<a data-back="traces" data-args='${JSON.stringify([service ?? null, root ?? null])}'>${root ?? "—"}</a> › ` +
+    `${id} · ${ms(span)}`,
+    `Returned ${found.length} rows in ${took} ms`,
+    `<table><thead><tr>
+       <th>Service</th><th>Span</th><th style="width:45%"></th><th class="num">Duration</th>
+     </tr></thead><tbody>` + order.map(({ row: r, depth, guides, isLast }) => {
+      const from = micros(r.started_at), to = micros(r.ended_at);
+      const colour = r.status === "error" ? "var(--red)" : tint(r.service);
+      return `<tr>
+        <td><span class="svc" style="color:${tint(r.service)};background:${tint(r.service)}17"
+                  title="${r.service ?? "no service was sent"}">${r.service ?? "—"}</span></td>
+        <td><span class="name" style="padding-left:${depth * STEP}px">${connectors(depth, guides, isLast)}<span
+            class="${r.status === "error" ? "err" : ""}"
+            title="${esc(r.status_message ?? r.status)}">${esc(r.name)}</span></span></td>
+        <td><div class="track"><div class="bar" style="margin-left:${((from - start) / span) * 100}%;
+             width:${Math.max(0.4, ((to - from) / span) * 100)}%;background:${colour}"></div></div></td>
+        <td class="num">${ms(to - from)}</td>
+      </tr>`;
+    }).join("") + "</tbody></table>");
+};
+
+// The pane is fixed to the bottom, so the page has to reserve exactly its
+// height or the last rows sit underneath it with nowhere left to scroll.
+// Observed rather than hooked to events: this catches the query changing, the
+// pane opening and closing, the window resizing, and text rewrapping.
+const pane = document.getElementById("query");
+new ResizeObserver(() => {
+  document.body.style.paddingBottom = pane.offsetHeight + 16 + "px";
+}).observe(pane);
+
+views.operations().catch(e => {
+  document.getElementById("note").textContent = "error: " + e.message;
+});
 </script>
