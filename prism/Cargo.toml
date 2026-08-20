@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+chrono = { workspace = true }
 clap = { workspace = true }
 compact = { workspace = true }
 datafusion = { workspace = true }
+futures = "0.3.34"
 ingest = { workspace = true }
 otlp = { workspace = true }
 query = { workspace = true }

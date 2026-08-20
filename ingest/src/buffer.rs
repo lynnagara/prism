@@ -71,6 +71,14 @@ impl<T: Record + Send + 'static> Buffer<T> {
         }
     }
 
+    /// Queues rows, waiting for room rather than turning the sender away.
+    /// For a sender that has nowhere else to put them and no one to retry —
+    /// a backfill reading from a file, rather than a request that can be
+    /// answered with "try again".
+    pub async fn send(&self, rows: Vec<T>) {
+        let _ = self.batches.send(rows).await;
+    }
+
     /// Stops accepting rows and waits for what was accepted to be written.
     /// Without it the process can exit owing whatever is still buffered.
     pub async fn shutdown(self) {
