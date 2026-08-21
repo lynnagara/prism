@@ -6,10 +6,10 @@ mod seed;
 
 use clap::{Parser, Subcommand};
 use compact::Compactor;
-use datafusion::object_store::path::Path;
 use datafusion::object_store::ObjectStore;
-use futures::TryStreamExt;
 use datafusion::object_store::local::LocalFileSystem;
+use datafusion::object_store::path::Path;
+use futures::TryStreamExt;
 use ingest::buffer::Buffer;
 use ingest::writer::Writer;
 use query::Catalog;

@@ -30,47 +30,108 @@ type Step = (&'static str, &'static str, u64, usize);
 /// The shapes are not: real ones nest through a proxy and a browser SDK and are
 /// hard to follow at a glance, and this is a store being shown, not a webshop.
 const SHAPES: &[(&str, &str, i64, &[Step])] = &[
-    ("frontend", "GET /api/products", 180, &[
-        ("product-catalog", "oteldemo.ProductCatalogService/ListProducts", 74, 0),
-        ("product-catalog", "SELECT products", 68, 1),
-        ("ad", "oteldemo.AdService/GetAds", 21, 0),
-    ]),
-    ("frontend", "POST /api/cart", 240, &[
-        ("product-catalog", "oteldemo.ProductCatalogService/GetProduct", 26, 0),
-        ("cart", "oteldemo.CartService/AddItem", 58, 0),
-        ("cart", "HSET cart", 61, 2),
-    ]),
-    ("frontend", "POST /api/checkout", 1_450, &[
-        ("cart", "oteldemo.CartService/GetCart", 8, 0),
-        ("cart", "HGET cart", 55, 1),
-        ("currency", "oteldemo.CurrencyService/Convert", 5, 0),
-        ("checkout", "oteldemo.CheckoutService/PlaceOrder", 71, 0),
-        ("payment", "oteldemo.PaymentService/Charge", 44, 4),
-        ("shipping", "oteldemo.ShippingService/ShipOrder", 19, 4),
-        ("email", "oteldemo.EmailService/SendOrderConfirmation", 12, 4),
-        ("accounting", "consume order", 6, 0),
-    ]),
-    ("frontend", "GET /api/recommendations", 320, &[
-        ("recommendation", "oteldemo.RecommendationService/ListRecommendations", 68, 0),
-        ("product-catalog", "oteldemo.ProductCatalogService/ListProducts", 47, 1),
-    ]),
-    ("frontend", "GET /api/data", 95, &[
-        ("ad", "oteldemo.AdService/GetAds", 72, 0),
-    ]),
-    ("frontend", "POST /api/currency", 70, &[
-        ("currency", "oteldemo.CurrencyService/Convert", 61, 0),
-    ]),
-    ("frontend", "GET /api/shipping", 210, &[
-        ("quote", "oteldemo.QuoteService/GetQuote", 63, 0),
-        ("shipping", "oteldemo.ShippingService/GetQuote", 44, 1),
-    ]),
-    ("load-generator", "browser_checkout", 2_600, &[
-        ("frontend", "GET /api/cart", 11, 0),
-        ("cart", "oteldemo.CartService/GetCart", 57, 1),
-        ("frontend", "POST /api/checkout", 74, 0),
-        ("checkout", "oteldemo.CheckoutService/PlaceOrder", 82, 3),
-        ("payment", "oteldemo.PaymentService/Charge", 37, 4),
-    ]),
+    (
+        "frontend",
+        "GET /api/products",
+        180,
+        &[
+            (
+                "product-catalog",
+                "oteldemo.ProductCatalogService/ListProducts",
+                74,
+                0,
+            ),
+            ("product-catalog", "SELECT products", 68, 1),
+            ("ad", "oteldemo.AdService/GetAds", 21, 0),
+        ],
+    ),
+    (
+        "frontend",
+        "POST /api/cart",
+        240,
+        &[
+            (
+                "product-catalog",
+                "oteldemo.ProductCatalogService/GetProduct",
+                26,
+                0,
+            ),
+            ("cart", "oteldemo.CartService/AddItem", 58, 0),
+            ("cart", "HSET cart", 61, 2),
+        ],
+    ),
+    (
+        "frontend",
+        "POST /api/checkout",
+        1_450,
+        &[
+            ("cart", "oteldemo.CartService/GetCart", 8, 0),
+            ("cart", "HGET cart", 55, 1),
+            ("currency", "oteldemo.CurrencyService/Convert", 5, 0),
+            ("checkout", "oteldemo.CheckoutService/PlaceOrder", 71, 0),
+            ("payment", "oteldemo.PaymentService/Charge", 44, 4),
+            ("shipping", "oteldemo.ShippingService/ShipOrder", 19, 4),
+            (
+                "email",
+                "oteldemo.EmailService/SendOrderConfirmation",
+                12,
+                4,
+            ),
+            ("accounting", "consume order", 6, 0),
+        ],
+    ),
+    (
+        "frontend",
+        "GET /api/recommendations",
+        320,
+        &[
+            (
+                "recommendation",
+                "oteldemo.RecommendationService/ListRecommendations",
+                68,
+                0,
+            ),
+            (
+                "product-catalog",
+                "oteldemo.ProductCatalogService/ListProducts",
+                47,
+                1,
+            ),
+        ],
+    ),
+    (
+        "frontend",
+        "GET /api/data",
+        95,
+        &[("ad", "oteldemo.AdService/GetAds", 72, 0)],
+    ),
+    (
+        "frontend",
+        "POST /api/currency",
+        70,
+        &[("currency", "oteldemo.CurrencyService/Convert", 61, 0)],
+    ),
+    (
+        "frontend",
+        "GET /api/shipping",
+        210,
+        &[
+            ("quote", "oteldemo.QuoteService/GetQuote", 63, 0),
+            ("shipping", "oteldemo.ShippingService/GetQuote", 44, 1),
+        ],
+    ),
+    (
+        "load-generator",
+        "browser_checkout",
+        2_600,
+        &[
+            ("frontend", "GET /api/cart", 11, 0),
+            ("cart", "oteldemo.CartService/GetCart", 57, 1),
+            ("frontend", "POST /api/checkout", 74, 0),
+            ("checkout", "oteldemo.CheckoutService/PlaceOrder", 82, 3),
+            ("payment", "oteldemo.PaymentService/Charge", 37, 4),
+        ],
+    ),
 ];
 
 /// What the shop sells, so a span someone opens says something recognisable
@@ -163,7 +224,8 @@ async fn flush(buffer: &Buffer<Span>, batch: &mut Vec<Span>) -> u64 {
 /// A root span and the calls beneath it, each laid out inside its own parent so
 /// nothing outlives the work that spawned it.
 fn trace(state: &mut u64, at: DateTime<Utc>) -> Vec<Span> {
-    let (root_service, operation, base_ms, steps) = SHAPES[(next(state) % SHAPES.len() as u64) as usize];
+    let (root_service, operation, base_ms, steps) =
+        SHAPES[(next(state) % SHAPES.len() as u64) as usize];
     let total = base_ms * (55 + next(state) % 150) as i64 / 100;
     let trace_id = TraceId::from(id::<16>(state));
     let started = at - TimeDelta::milliseconds(total);
@@ -171,15 +233,26 @@ fn trace(state: &mut u64, at: DateTime<Utc>) -> Vec<Span> {
     // Roughly one trace in fourteen fails, in one of its calls.
     let failing = (next(state) % 14 == 0).then(|| next(state) % steps.len() as u64 + 1);
     // A status of Ok means someone asserted success, which almost nothing does.
-    let root_status = if next(state) % 20 == 0 { Status::Ok } else { Status::Unset };
+    let root_status = if next(state) % 20 == 0 {
+        Status::Ok
+    } else {
+        Status::Unset
+    };
 
     let common = || Common {
         organization_id: "1".to_string(),
         project_id: "1".to_string(),
         received_at: Timestamp::from(at),
     };
-    let span = |service: &str, name: &str, id: SpanId, parent, from: i64, to: i64,
-                status, message: Option<String>, tags| Span {
+    let span = |service: &str,
+                name: &str,
+                id: SpanId,
+                parent,
+                from: i64,
+                to: i64,
+                status,
+                message: Option<String>,
+                tags| Span {
         common: common(),
         span_id: id,
         trace_id,
@@ -199,7 +272,17 @@ fn trace(state: &mut u64, at: DateTime<Utc>) -> Vec<Span> {
     // Where each span sits, and how far into each the next child should start.
     let mut window = vec![(0i64, total)];
     let mut cursor = vec![total / 40];
-    let mut spans = vec![span(root_service, operation, root_id, None, 0, total, root_status, None, Tags::default())];
+    let mut spans = vec![span(
+        root_service,
+        operation,
+        root_id,
+        None,
+        0,
+        total,
+        root_status,
+        None,
+        Tags::default(),
+    )];
 
     for (index, (service, name, share, parent)) in steps.iter().enumerate() {
         let (parent_from, parent_to) = window[*parent];
@@ -218,8 +301,12 @@ fn trace(state: &mut u64, at: DateTime<Utc>) -> Vec<Span> {
             to,
             if failed { Status::Error } else { Status::Unset },
             failed.then(|| {
-                ["upstream timeout", "connection reset", "deadline exceeded", "429 rate limited"]
-                    [(next(state) % 4) as usize]
+                [
+                    "upstream timeout",
+                    "connection reset",
+                    "deadline exceeded",
+                    "429 rate limited",
+                ][(next(state) % 4) as usize]
                     .to_string()
             }),
             tags(name, product),
