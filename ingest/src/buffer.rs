@@ -148,7 +148,7 @@ impl<T: Record> Pending<T> {
     fn add(&mut self, row: T) {
         self.first_pushed_at.get_or_insert_with(Instant::now);
 
-        let partition = row.common().received_at.partition_start(T::GRANULARITY);
+        let partition = (T::partitioned_by().time)(&row).partition_start(T::GRANULARITY);
         self.partitions
             .entry(partition)
             .or_insert_with(|| File {
