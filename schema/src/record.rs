@@ -18,6 +18,12 @@ type ColumnBuilder<T> = Box<dyn Fn(&[T]) -> ArrayRef>;
 /// identically — a mismatch gives an empty table, not an error.
 pub const PARTITION_COLUMN: &str = "partition";
 
+/// The column a record type is partitioned by.
+pub struct Partition<T> {
+    pub column: &'static str,
+    pub time: fn(&T) -> &Timestamp,
+}
+
 /// Named because the columns [`Record::all_columns`] declares and the order
 /// [`Record::primary_key`] orders by have to agree.
 const ORGANIZATION_ID: &str = "organization_id";
@@ -134,6 +140,16 @@ pub trait Record: Sized + 'static {
     fn directory(instant: DateTime<Utc>) -> String {
         let start = Timestamp::from(instant).partition_start(Self::GRANULARITY);
         format!("{}/{}", Self::TABLE, Self::partition_dir(start))
+    }
+
+    /// Always [`Common::received_at`], which is the only timestamp a filter
+    /// can be read as a range of partitions — but named by the type, so
+    /// nothing downstream has to assume which column that is.
+    fn partitioned_by() -> Partition<Self> {
+        Partition {
+            column: RECEIVED_AT,
+            time: |r: &Self| &r.common().received_at,
+        }
     }
 
     fn all_columns() -> Columns<Self> {

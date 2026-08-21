@@ -15,12 +15,13 @@ use datafusion::error::Result;
 use datafusion::logical_expr::{BinaryExpr, Operator, TableProviderFilterPushDown, TableType};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{Expr, col, lit};
-use schema::record::{PARTITION_COLUMN, RECEIVED_AT};
+use schema::record::PARTITION_COLUMN;
 use schema::types::{Granularity, TimePartitioned, Timestamp};
 
 #[derive(Debug)]
 pub struct PartitionedTable {
     inner: Arc<dyn TableProvider>,
+    partitioned_by: &'static str,
     granularity: Granularity,
 }
 
@@ -28,8 +29,16 @@ impl PartitionedTable {
     /// Wraps any table whose rows carry a `partition` column — the files
     /// themselves, or a view over them, which applies what it is given on top
     /// of its own plan and leaves the optimizer to push it the rest of the way.
-    pub fn new(inner: Arc<dyn TableProvider>, granularity: Granularity) -> Self {
-        Self { inner, granularity }
+    pub fn new(
+        inner: Arc<dyn TableProvider>,
+        partitioned_by: &'static str,
+        granularity: Granularity,
+    ) -> Self {
+        Self {
+            inner,
+            partitioned_by,
+            granularity,
+        }
     }
 
     /// Pushes `filter` down to `partition`, to avoid opening every file.
@@ -48,8 +57,10 @@ impl PartitionedTable {
         };
 
         let (op, at) = match (left.as_ref(), right.as_ref()) {
-            (Expr::Column(column), Expr::Literal(at, _)) if column.name == RECEIVED_AT => (*op, at),
-            (Expr::Literal(at, _), Expr::Column(column)) if column.name == RECEIVED_AT => {
+            (Expr::Column(column), Expr::Literal(at, _)) if column.name == self.partitioned_by => {
+                (*op, at)
+            }
+            (Expr::Literal(at, _), Expr::Column(column)) if column.name == self.partitioned_by => {
                 (op.swap()?, at)
             }
             _ => return None,

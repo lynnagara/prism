@@ -63,7 +63,11 @@ impl Catalog {
 
         // Wrapped so a filter on `received_at` also bounds which partitions can
         // match; a bare ListingTable reads the two as unrelated.
-        let table = PartitionedTable::new(Arc::new(ListingTable::try_new(config)?), T::GRANULARITY);
+        let table = PartitionedTable::new(
+            Arc::new(ListingTable::try_new(config)?),
+            T::partitioned_by().column,
+            T::GRANULARITY,
+        );
 
         self.ctx.register_table(T::TABLE, Arc::new(table))?;
 
@@ -101,7 +105,11 @@ impl Catalog {
         // bounds the partitions: the view applies what it is handed above its
         // own plan, and the optimizer pushes it below the window from there.
         let plan = self.ctx.sql(&sql).await?.into_unoptimized_plan();
-        let merged = PartitionedTable::new(Arc::new(ViewTable::new(plan, None)), T::GRANULARITY);
+        let merged = PartitionedTable::new(
+            Arc::new(ViewTable::new(plan, None)),
+            T::partitioned_by().column,
+            T::GRANULARITY,
+        );
 
         self.ctx
             .register_table(format!("{}_merged", T::TABLE), Arc::new(merged))?;
