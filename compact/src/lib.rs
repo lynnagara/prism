@@ -132,7 +132,7 @@ impl Compactor {
             .iter()
             .map(|source| format!("{OBJECT_STORE_URL}/{}", source.location))
             .collect();
-        let order: Vec<SortExpr> = T::write_order()
+        let order: Vec<SortExpr> = T::sort_order()
             .iter()
             .map(|(name, ascending)| col(*name).sort(*ascending, false))
             .collect();

@@ -45,7 +45,7 @@ impl Catalog {
     /// everything it reads, so the caller chooses which they want.
     pub async fn register<T: Record>(&self) -> Result<()> {
         let url = ListingTableUrl::parse(format!("{OBJECT_STORE_URL}/{}/", T::TABLE))?;
-        let sort_order = T::write_order()
+        let sort_order = T::sort_order()
             .iter()
             .map(|(name, ascending)| col(*name).sort(*ascending, false))
             .collect();

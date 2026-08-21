@@ -168,10 +168,10 @@ pub trait Record: Sized + 'static {
         columns
     }
 
-    /// How rows are written: primary key first, then — for a type that merges
+    /// How rows are sorted: primary key first, then — for a type that merges
     /// — its version descending, so the row that supersedes the others is the
     /// first of its run and a reader can take it without looking further.
-    fn write_order() -> Vec<(&'static str, bool)> {
+    fn sort_order() -> Vec<(&'static str, bool)> {
         let mut order: Vec<(&'static str, bool)> = Self::all_primary_key()
             .into_iter()
             .map(|c| (c, true))
@@ -184,12 +184,12 @@ pub trait Record: Sized + 'static {
     }
 
     fn sorted(batch: RecordBatch) -> Result<RecordBatch, ArrowError> {
-        let columns: Vec<SortColumn> = Self::write_order()
+        let columns: Vec<SortColumn> = Self::sort_order()
             .iter()
             .map(|(name, ascending)| SortColumn {
                 values: batch
                     .column_by_name(name)
-                    .expect("write_order names a column in the schema")
+                    .expect("sort_order names a column in the schema")
                     .clone(),
                 options: Some(SortOptions {
                     descending: !ascending,
