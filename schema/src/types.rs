@@ -229,6 +229,7 @@ impl ArrowField for Tags {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use datafusion::arrow::array::{Array, MapArray};
 
     #[test]
     fn partition_start_truncates_to_granularity() {
@@ -265,5 +266,57 @@ mod tests {
             .downcast_ref::<TimestampMicrosecondArray>()
             .expect("an optional timestamp column is still a timestamp column");
         assert_eq!(timestamps.value(0), at.timestamp_micros());
+    }
+
+    fn map(tags: &[&Tags]) -> MapArray {
+        Tags::build_array(tags.iter().copied().map(Some))
+            .as_any()
+            .downcast_ref::<MapArray>()
+            .expect("a map column")
+            .clone()
+    }
+
+    /// Sorted on the way in, so two records with the same tags in a different
+    /// order encode to the same bytes.
+    #[test]
+    fn tags_encode_in_key_order() {
+        let tags = Tags::from_iter([("b", "2".to_string()), ("a", "1".to_string())]);
+        let keys = map(&[&tags]);
+        let keys = keys
+            .keys()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("string keys");
+
+        assert_eq!(keys.value(0), "a");
+        assert_eq!(keys.value(1), "b");
+    }
+
+    /// A bare tag is a key with no value, which is not the same as the key
+    /// being absent — `map_keys` finds it, `tags['x']` reads null.
+    #[test]
+    fn a_tag_can_have_no_value() {
+        let tags = Tags::from_iter([("bare", None), ("set", Some("1".to_string()))]);
+        let values = map(&[&tags]);
+        let values = values
+            .values()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+
+        assert!(values.is_null(0), "the bare tag has no value");
+        assert_eq!(values.value(1), "1");
+    }
+
+    /// One entry per row whatever its tag count, so a row with none is an
+    /// empty map rather than one that borrowed the next row's entries.
+    #[test]
+    fn a_row_without_tags_is_an_empty_map() {
+        let tagged = Tags::from_iter([("a", "1".to_string())]);
+        let rows = map(&[&Tags::default(), &tagged]);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.value_length(0), 0);
+        assert_eq!(rows.value_length(1), 1);
     }
 }
